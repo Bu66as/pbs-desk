@@ -1,0 +1,10 @@
+/var/log/pbs-backup.log {
+    monthly
+    rotate 6
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0644 root root
+}

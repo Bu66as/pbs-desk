@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=PBS-Desk: Restore
+Name[de]=PBS-Desk: Wiederherstellen
+GenericName=Restore files from a backup
+GenericName[de]=Dateien aus der Sicherung zurückholen
+Comment=Browse backups and restore individual files
+Comment[de]=Sicherungen ansehen und einzelne Dateien zurückholen
+Exec=/usr/local/bin/pbs-restore
+Icon=pbs-desk
+Terminal=false
+Categories=Utility;Archiving;
+Keywords=backup;restore;proxmox;
+Keywords[de]=Backup;Sicherung;Wiederherstellen;proxmox;

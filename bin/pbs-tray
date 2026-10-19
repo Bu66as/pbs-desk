@@ -1,0 +1,819 @@
+#!/usr/bin/env python3
+"""Tray-Anzeige und -Steuerung fuer das PBS-Backup eines Endgeraets.
+
+Zeigt im Systemabschnitt der Leiste, ob gerade gesichert wird (samt Fortschritt),
+wie alt die letzte erfolgreiche Sicherung ist und mit welcher Drossel der
+naechste Lauf startet. Ueber das Kontextmenue laesst sich die Drossel fuer den
+heutigen Tag umstellen (ruft /usr/local/bin/pbs-rate auf). Unter
+"Einstellungen …" lassen sich Uhrzeiten, Arbeitszeit-Sperre, Drossel und auf
+nicht zentral verwalteten Geraeten der Backup-Server
+dauerhaft aendern (pkexec /usr/local/sbin/pbs-settings, Datei
+/etc/pbs-backup.local — die zentrale Konfiguration fasst sie nicht an).
+
+Hintergrund: Backup-Laeufe wurden beim Herunterfahren abgewuergt, weil nicht
+sichtbar war, dass ueberhaupt eines laeuft.
+"""
+import gettext
+import hashlib
+import os
+import re
+import ssl
+import subprocess
+import sys
+from datetime import date, datetime
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QIcon
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox,
+                               QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                               QMenu, QMessageBox, QPushButton, QSpinBox, QSystemTrayIcon,
+                               QVBoxLayout)
+
+LOCALEDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "share", "locale")
+
+
+def _sprache_deutsch():
+    """Deutsch, wenn die erste Sprache der Umgebung de ist; sonst Englisch."""
+    for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        w = os.environ.get(v, "")
+        if w:
+            return w.split(":")[0].lower().startswith("de")
+    return False
+
+
+_ = (gettext.NullTranslations() if _sprache_deutsch() else
+     gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+# pkexec loescht die Umgebung: die Root-Helfer bekommen die Sprache deshalb als
+# erstes Argument direkt nach dem Helferpfad.
+LANG_ARG = "--lang=de" if _sprache_deutsch() else "--lang=en"
+
+LOG = "/var/log/pbs-backup.log"
+STAMP = "/var/lib/pbs-backup/last-success"
+LETZTES_ZIEL = "/var/lib/pbs-backup/last-target"
+OVERRIDE = "/var/lib/pbs-backup/rate.override"
+CONF = "/etc/default/pbs-backup"
+LOKAL = "/etc/pbs-backup.local"
+PBS_SETTINGS = "/usr/local/sbin/pbs-settings"
+TIMER = "/etc/systemd/system/pbs-backup.timer"
+PBS_RATE = "/usr/local/bin/pbs-rate"
+PBS_RESTORE = "/usr/local/bin/pbs-restore"
+UNIT = "pbs-backup.service"
+FORTSCHRITT = re.compile(r"processed ([\d.]+ \w+) in ([\dhm ]+), uploaded ([\d.]+ \w+)")
+DROSSEL = re.compile(r"Drossel=([^\s\)\[]+)(?:\s*\[([^\]]+)\])?")
+
+
+def lauf(*args, timeout=8, env=None):
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except Exception as e:  # Timeout oder fehlendes Binary -> nie die GUI killen
+        return 1, "", str(e)
+
+
+def laeuft():
+    _, out, _ = lauf("systemctl", "is-active", UNIT)
+    return out in ("active", "activating"), out
+
+
+def log_zeilen_aktueller_lauf():
+    """Zeilen des Skript-Logs ab der letzten START-Marke."""
+    try:
+        with open(LOG, errors="replace") as f:
+            zeilen = f.readlines()[-400:]
+    except OSError:
+        return []
+    letzter_start = 0
+    for i, z in enumerate(zeilen):
+        if z.startswith("=== START"):
+            letzter_start = i
+    return zeilen[letzter_start:]
+
+
+def laufende_rate():
+    """Drossel, mit der der GERADE laufende Lauf gestartet ist.
+
+    Nicht mit naechste_rate() verwechseln: die Rate wird beim Start festgelegt
+    und laesst sich waehrend des Laufs nicht mehr aendern.
+    """
+    for z in log_zeilen_aktueller_lauf():
+        m = DROSSEL.search(z)
+        if m:
+            return anzeige(m.group(1)), anzeige(m.group(2) or "")
+    return None, ""
+
+
+def anzeige(text):
+    """Feste deutsche Werte aus dem Skript-Log fuer die Anzeige uebersetzen.
+
+    Das Log selbst bleibt deutsch (es wird per Text ausgewertet); unbekannte
+    Werte (z.B. '2MiB') gehen unveraendert durch.
+    """
+    return {
+        "unbegrenzt": _("unbegrenzt"),
+        "LAN: frei": _("LAN: frei"),
+        "Handschalter: volle Fahrt": _("Handschalter: volle Fahrt"),
+        "Handschalter: gebremst": _("Handschalter: gebremst"),
+        "Automatik: Nacht": _("Automatik: Nacht"),
+        "Automatik: Abend": _("Automatik: Abend"),
+        "Automatik: Tag": _("Automatik: Tag"),
+    }.get(text, text)
+
+
+def fortschritt():
+    """Letzte processed-Zeile des laufenden Backups.
+
+    Das Skript leitet seine Ausgabe per `exec >> $LOG` ins Skript-Log um, im
+    journal steht deshalb nur der Unit-Rahmen. Gelesen wird ab der letzten
+    START-Zeile, damit kein Fortschritt eines alten Laufs angezeigt wird.
+    """
+    treffer = None
+    for z in log_zeilen_aktueller_lauf():
+        m = FORTSCHRITT.search(z)
+        if m:
+            treffer = m
+    if not treffer:
+        return None
+    return _("{gelesen} gelesen in {dauer}, {hochgeladen} hochgeladen").format(
+        gelesen=treffer.group(1), dauer=treffer.group(2), hochgeladen=treffer.group(3))
+
+
+def letzter_erfolg():
+    try:
+        with open(STAMP) as f:
+            d = datetime.strptime(f.read().strip(), "%Y-%m-%d").date()
+        return d, (date.today() - d).days
+    except Exception:
+        return None, None
+
+
+def stempel():
+    """Aenderungszeit des Erfolgsstempels; aendert sich nur bei erfolgreichem Lauf."""
+    try:
+        return os.stat(STAMP).st_mtime_ns
+    except OSError:
+        return None
+
+
+def lauf_kennung():
+    """InvocationID des aktuellen bzw. letzten Laufs (leer, wenn es noch keinen gab)."""
+    return lauf("systemctl", "show", UNIT, "-p", "InvocationID", "--value")[1]
+
+
+def letzte_meldung():
+    """Letzte Zeile des aktuellen Laufs im Log, z.B. der SKIP-Grund."""
+    zeilen = [z.strip() for z in log_zeilen_aktueller_lauf() if z.strip()]
+    return zeilen[-1] if zeilen else ""
+
+
+def herunterfahren():
+    """Ueber die Sitzung abmelden und ausschalten, damit Programme sauber schliessen;
+    ohne Plasma bzw. GNOME direkt ueber logind."""
+    if lauf("busctl", "--user", "introspect", "org.kde.Shutdown", "/Shutdown")[0] == 0:
+        return lauf("busctl", "--user", "--expect-reply=no", "call", "org.kde.Shutdown",
+                    "/Shutdown", "org.kde.Shutdown", "logoutAndShutdown")[0] == 0
+    if lauf("gnome-session-quit", "--power-off", "--no-prompt")[0] == 0:
+        return True
+    return lauf("systemctl", "poweroff")[0] == 0
+
+
+def datei_werte(pfad):
+    werte = {}
+    try:
+        with open(pfad) as f:
+            for zeile in f:
+                zeile = zeile.strip()
+                if not zeile or zeile.startswith("#") or "=" not in zeile:
+                    continue
+                k, v = zeile.split("=", 1)
+                werte[k.strip()] = v.split("#")[0].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return werte
+
+
+def standard_werte():
+    """Werte der zentralen Konfiguration (/etc/default/pbs-backup) samt Vorgaben."""
+    werte = {"PBS_RATE_TAG": "2MiB", "PBS_RATE_ABEND": "4MiB", "PBS_RATE_NACHT": "",
+             "ABEND_START": "17", "NACHT_START": "22", "MOBIL": "0",
+             "ARBEITSZEIT_SKIP": "1", "WORK_START": "8", "WORK_END": "17",
+             "DEVICE_NAME": os.uname().nodename.split(".")[0],
+             "LAN_NAME": "pbs-lan", "OFFSITE_NAME": "pbs-offsite"}
+    werte.update(datei_werte(CONF))
+    return werte
+
+
+def conf_werte():
+    """Zentrale Konfiguration, ueberlagert von den lokalen Einstellungen."""
+    werte = standard_werte()
+    werte.update(datei_werte(LOKAL))
+    return werte
+
+
+def standard_zeiten():
+    """Standard-Uhrzeiten aus dem mitgelieferten Timer, z.B. '*-*-* 17,19,21,23:00'."""
+    zeiten = []
+    try:
+        with open(TIMER) as f:
+            for zeile in f:
+                m = re.match(r"\s*OnCalendar=.*?([\d,]+):(\d\d)", zeile)
+                if m:
+                    zeiten += [f"{int(h):02d}:{m.group(2)}" for h in m.group(1).split(",") if h]
+    except Exception:
+        pass
+    return ", ".join(sorted(set(zeiten)))
+
+
+def aktuelle_zeiten():
+    lokal = datei_werte(LOKAL).get("ZEITEN", "")
+    return ", ".join(lokal.split(",")) if lokal else standard_zeiten()
+
+
+def verwaltet():
+    """Zentral verwaltet: es liegt eine zentrale Konfiguration vor, und sie gibt
+    den Server nicht frei (VERWALTET=0). Dann ist der Server-Abschnitt gesperrt."""
+    return os.path.exists(CONF) and datei_werte(CONF).get("VERWALTET", "1") != "0"
+
+
+def fingerabdruck(host, port):
+    """SHA-256-Fingerabdruck des Server-Zertifikats, wie ihn der PBS anzeigt."""
+    der = ssl.PEM_cert_to_DER_cert(ssl.get_server_certificate((host, port), timeout=10))
+    h = hashlib.sha256(der).hexdigest()
+    return ":".join(h[i:i + 2] for i in range(0, len(h), 2))
+
+
+def naechster_versuch():
+    _, out, _ = lauf("systemctl", "show", "pbs-backup.timer", "-p", "NextElapseUSecRealtime", "--value")
+    return out or "?"
+
+
+class EinstellungenDialog(QDialog):
+    """Dauerhafte lokale Einstellungen; gespeichert wird per pkexec pbs-settings."""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(_("{programm} – Einstellungen ({geraet})").format(
+            programm=PROGRAMM, geraet=geraet()))
+        w, std = conf_werte(), standard_werte()
+        lay = QVBoxLayout(self)
+
+        g = QGroupBox(_("Automatische Sicherung"))
+        f = QFormLayout(g)
+        self.zeiten = QLineEdit(aktuelle_zeiten())
+        self.zeiten.setPlaceholderText(standard_zeiten())
+        self.zeiten.setToolTip(_("Versuche pro Tag, durch Komma getrennt (HH:MM). Gesichert wird "
+                                 "höchstens einmal pro Tag; der erste Versuch, der klappt, zählt.\n"
+                                 "Leer = Standard ({zeiten}).").format(zeiten=standard_zeiten()))
+        f.addRow(_("Uhrzeiten:"), self.zeiten)
+        hinweis = QLabel(_("Standard: {zeiten} · Start streut bis 20 min · "
+                           "nächster Versuch: {naechster}").format(
+                               zeiten=standard_zeiten() or "?", naechster=naechster_versuch()))
+        hinweis.setWordWrap(True)
+        f.addRow("", hinweis)
+
+        self.skip = QCheckBox(_("Mo–Fr während der Arbeitszeit nicht sichern"))
+        self.skip.setChecked(w.get("ARBEITSZEIT_SKIP", "1") == "1")
+        self.ws, self.we = QSpinBox(), QSpinBox()
+        for sb, k in ((self.ws, "WORK_START"), (self.we, "WORK_END")):
+            sb.setRange(0, 23)
+            sb.setSuffix(":00")
+            sb.setValue(int(w.get(k) or std.get(k) or 8))
+        zeile = QHBoxLayout()
+        zeile.addWidget(QLabel(_("von")))
+        zeile.addWidget(self.ws)
+        zeile.addWidget(QLabel(_("bis")))
+        zeile.addWidget(self.we)
+        zeile.addStretch()
+        f.addRow(self.skip)
+        f.addRow(_("Arbeitszeit:"), zeile)
+        self.skip.toggled.connect(self.ws.setEnabled)
+        self.skip.toggled.connect(self.we.setEnabled)
+        self.ws.setEnabled(self.skip.isChecked())
+        self.we.setEnabled(self.skip.isChecked())
+        lay.addWidget(g)
+        lay.addWidget(self.server_gruppe())
+
+        self.raten = {}
+        if mobil():
+            g2 = QGroupBox(_("Drossel unterwegs (nur Offsite, im LAN immer frei)"))
+            f2 = QFormLayout(g2)
+            for k, text in (("PBS_RATE_TAG", _("Tag:")), ("PBS_RATE_ABEND", _("Abend:")),
+                            ("PBS_RATE_NACHT", _("Nacht:"))):
+                e = QLineEdit(w.get(k, ""))
+                e.setPlaceholderText(_("unbegrenzt"))
+                e.setToolTip(_("z.B. 2MiB, 500KiB – leer = unbegrenzt"))
+                self.raten[k] = e
+                f2.addRow(text, e)
+            self.abend, self.nacht = QSpinBox(), QSpinBox()
+            for sb, k in ((self.abend, "ABEND_START"), (self.nacht, "NACHT_START")):
+                sb.setRange(0, 23)
+                sb.setSuffix(":00")
+                sb.setValue(int(w.get(k) or std.get(k) or 17))
+            f2.addRow(_("Abend ab:"), self.abend)
+            f2.addRow(_("Nacht ab:"), self.nacht)
+            lay.addWidget(g2)
+
+        knoepfe = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        standard = QPushButton(_("Standard wiederherstellen"))
+        knoepfe.addButton(standard, QDialogButtonBox.ButtonRole.ResetRole)
+        knoepfe.accepted.connect(self.speichern)
+        knoepfe.rejected.connect(self.reject)
+        standard.clicked.connect(self.zuruecksetzen)
+        lay.addWidget(knoepfe)
+
+    def server_gruppe(self):
+        g = QGroupBox(_("Backup-Server"))
+        f = QFormLayout(g)
+        self.server = {}
+        if verwaltet():
+            w = standard_werte()
+            f.addRow(_("Server:"), QLabel(f"{w.get('LAN_NAME', '?')} "
+                                          f"({w.get('LAN_HOST', '?')}:{w.get('LAN_PORT', '8007')})"))
+            f.addRow(_("Namespace:"), QLabel(w.get("PBS_NS") or "–"))
+            hinweis = QLabel(_("Dieses Gerät wird zentral verwaltet. Server und Zugangsdaten "
+                               "kommen aus der Verwaltung und lassen sich hier nicht ändern."))
+            hinweis.setWordWrap(True)
+            f.addRow(hinweis)
+            return g
+        w = datei_werte(LOKAL)
+        self.token_gespeichert = bool(w.get("SERVER_HOST"))
+        felder = (
+            ("SERVER_HOST", _("Server:"), _("pbs.example.org oder 192.168.1.10"),
+             _("Name oder IPv4-Adresse des Proxmox Backup Servers. Leer = kein eigener Server.")),
+            ("SERVER_PORT", _("Port:"), "8007", ""),
+            ("SERVER_DATASTORE", _("Datastore:"), "tank", ""),
+            ("SERVER_AUTHID", _("API-Token:"), "backup@pbs!notebook",
+             _("Benutzer und Token-Name in der Form benutzer@realm!tokenname")),
+            ("TOKEN", _("Token-Geheimnis:"), _("unverändert") if self.token_gespeichert else "",
+             _("Liegt danach nur in einer Datei, die allein root lesen darf.")),
+            ("SERVER_NS", _("Namespace:"), _("leer = oberste Ebene"), ""),
+            ("SERVER_ID", _("Backup-ID:"), os.uname().nodename.split(".")[0],
+             _("Name der Sicherung auf dem Server. Leer = Rechnername.")),
+        )
+        for k, text, platzhalter, tipp in felder:
+            e = QLineEdit(w.get(k, ""))
+            e.setPlaceholderText(platzhalter)
+            e.setToolTip(tipp)
+            if k == "TOKEN":
+                e.setEchoMode(QLineEdit.EchoMode.Password)
+            self.server[k] = e
+            f.addRow(text, e)
+        fp = QLineEdit(w.get("SERVER_FINGERPRINT", ""))
+        fp.setPlaceholderText(_("vom Server holen und mit der Anzeige im PBS vergleichen"))
+        self.server["SERVER_FINGERPRINT"] = fp
+        holen = QPushButton(_("Vom Server holen"))
+        holen.clicked.connect(self.fingerabdruck_holen)
+        zeile = QHBoxLayout()
+        zeile.addWidget(fp)
+        zeile.addWidget(holen)
+        f.addRow(_("Fingerabdruck:"), zeile)
+        test = QPushButton(_("Verbindung testen"))
+        test.clicked.connect(self.server_testen)
+        zeile = QHBoxLayout()
+        zeile.addWidget(test)
+        zeile.addStretch()
+        f.addRow("", zeile)
+        return g
+
+    def server_wert(self, k):
+        return self.server[k].text().strip()
+
+    def fingerabdruck_holen(self):
+        host, port = self.server_wert("SERVER_HOST"), self.server_wert("SERVER_PORT") or "8007"
+        if not host:
+            QMessageBox.warning(self, PROGRAMM, _("Bitte zuerst den Server eintragen."))
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            fp = fingerabdruck(host, int(port))
+        except Exception as e:
+            fp = None
+            fehler = str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if fp is None:
+            QMessageBox.warning(self, PROGRAMM, _("{host}:{port} antwortet nicht:\n{fehler}").format(
+                host=host, port=port, fehler=fehler))
+            return
+        frage = _("Der Server {host}:{port} meldet diesen Fingerabdruck:\n\n{fp}\n\n"
+                  "Stimmt er mit der Anzeige im PBS überein (Dashboard → Fingerabdruck anzeigen)? "
+                  "Nur dann übernehmen.").format(host=host, port=port, fp=fp)
+        if QMessageBox.question(self, PROGRAMM, frage) == QMessageBox.StandardButton.Yes:
+            self.server["SERVER_FINGERPRINT"].setText(fp)
+
+    def server_testen(self):
+        token = self.server_wert("TOKEN")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            if token:
+                # Mit den Werten aus dem Fenster, ohne root. Das Geheimnis geht
+                # ueber die Umgebung, nicht ueber die Kommandozeile.
+                repo = (f"{self.server_wert('SERVER_AUTHID')}@{self.server_wert('SERVER_HOST')}:"
+                        f"{self.server_wert('SERVER_PORT') or '8007'}:"
+                        f"{self.server_wert('SERVER_DATASTORE')}")
+                befehl = ["proxmox-backup-client", "snapshot", "list", "--repository", repo,
+                          "--output-format", "json"]
+                if self.server_wert("SERVER_NS"):
+                    befehl += ["--ns", self.server_wert("SERVER_NS")]
+                umgebung = dict(os.environ, PBS_PASSWORD=token,
+                                PBS_FINGERPRINT=self.server_wert("SERVER_FINGERPRINT"))
+                try:
+                    p = subprocess.run(befehl, env=umgebung, capture_output=True, text=True,
+                                       stdin=subprocess.DEVNULL, timeout=30)
+                    rc, out, err = p.returncode, "", p.stderr.strip() or p.stdout.strip()
+                except Exception as e:
+                    rc, out, err = 1, "", str(e)
+                if rc == 0:
+                    out = _("Anmeldung klappt, der Namespace ist lesbar.")
+            elif self.token_gespeichert:
+                # Der gespeicherte Token ist nur fuer root lesbar: geprueft wird der
+                # gespeicherte Stand, nicht ungespeicherte Aenderungen im Fenster.
+                rc, out, err = lauf("pkexec", PBS_SETTINGS, LANG_ARG, "server-test", timeout=180)
+            else:
+                rc, out, err = 1, "", _("Bitte das Token-Geheimnis eintragen.")
+        finally:
+            QApplication.restoreOverrideCursor()
+        if rc == 0:
+            QMessageBox.information(self, PROGRAMM, out)
+        elif not (rc in (126, 127) and not err.startswith("FEHLER")):
+            QMessageBox.warning(self, PROGRAMM, err or _("Fehler (rc={rc})").format(rc=rc))
+
+    def ausfuehren(self, *args, eingabe=None):
+        if eingabe is None:
+            rc, out, err = lauf("pkexec", PBS_SETTINGS, LANG_ARG, *args, timeout=180)
+        else:
+            try:
+                p = subprocess.run(["pkexec", PBS_SETTINGS, LANG_ARG, *args], input=eingabe + "\n",
+                                   capture_output=True, text=True, timeout=180)
+                rc, out, err = p.returncode, p.stdout.strip(), p.stderr.strip()
+            except Exception as e:
+                rc, out, err = 1, "", str(e)
+        if rc == 0:
+            QMessageBox.information(self, PROGRAMM, out or _("Gespeichert."))
+            self.accept()
+        elif rc in (126, 127) and not err.startswith("FEHLER"):
+            pass  # Passwortabfrage abgebrochen
+        else:
+            QMessageBox.warning(self, PROGRAMM, err or out or _("Fehler (rc={rc})").format(rc=rc))
+
+    def speichern(self):
+        args = [f"ZEITEN={self.zeiten.text()}",
+                f"ARBEITSZEIT_SKIP={1 if self.skip.isChecked() else 0}",
+                f"WORK_START={self.ws.value()}", f"WORK_END={self.we.value()}"]
+        if self.raten:
+            args += [f"{k}={e.text().strip()}" for k, e in self.raten.items()]
+            args += [f"ABEND_START={self.abend.value()}", f"NACHT_START={self.nacht.value()}"]
+        if self.server:
+            args += [f"{k}={self.server_wert(k)}" for k in self.server if k != "TOKEN"]
+            self.ausfuehren("set", "--token-stdin", *args, eingabe=self.server_wert("TOKEN"))
+        else:
+            self.ausfuehren("set", *args)
+
+    def zuruecksetzen(self):
+        if QMessageBox.question(self, PROGRAMM,
+                                _("Uhrzeiten, Arbeitszeit und Drossel auf den Standard "
+                                  "zurücksetzen? Ein eingetragener Server bleibt.")) == QMessageBox.StandardButton.Yes:
+            self.ausfuehren("reset")
+
+
+def override_heute():
+    """Gibt 'voll'/'langsam' zurueck, wenn fuer heute ein Handschalter gesetzt ist."""
+    try:
+        with open(OVERRIDE) as f:
+            teile = f.read().split()
+        if len(teile) >= 2 and teile[0] == date.today().isoformat():
+            if teile[1] in ("voll", "langsam"):
+                return teile[1]
+    except Exception:
+        pass
+    return None
+
+
+def automatik_rate():
+    w = conf_werte()
+    h = datetime.now().hour
+    try:
+        abend, nacht, morgen = int(w["ABEND_START"]), int(w["NACHT_START"]), int(w["WORK_START"])
+    except ValueError:
+        abend, nacht, morgen = 17, 22, 8
+    # Nacht endet mit WORK_START, wie in pbs-backup
+    if h >= nacht or h < morgen:
+        return w["PBS_RATE_NACHT"] or _("unbegrenzt"), _("Automatik: Nacht")
+    if h >= abend:
+        return w["PBS_RATE_ABEND"] or _("unbegrenzt"), _("Automatik: Abend")
+    return w["PBS_RATE_TAG"] or _("unbegrenzt"), _("Automatik: Tag")
+
+
+def mobil():
+    return conf_werte().get("MOBIL") == "1"
+
+
+def geraet():
+    return conf_werte().get("DEVICE_NAME") or "?"
+
+
+def letztes_ziel():
+    try:
+        with open(LETZTES_ZIEL) as f:
+            return f.read().split()[1]
+    except Exception:
+        return None
+
+
+def laufendes_ziel():
+    for z in log_zeilen_aktueller_lauf():
+        m = re.search(r"Ziel=(\S+)", z)
+        if m:
+            return m.group(1)
+    return None
+
+
+def naechste_rate():
+    """Was der naechste Lauf tatsaechlich nehmen wuerde."""
+    ov = override_heute()
+    if ov == "voll":
+        return _("unbegrenzt"), _("Handschalter: volle Fahrt")
+    if ov == "langsam":
+        return conf_werte()["PBS_RATE_TAG"] or _("unbegrenzt"), _("Handschalter: gebremst")
+    return automatik_rate()
+
+
+PROGRAMM = "PBS-Desk"
+
+# Eigene Symbole je Zustand; fehlen sie (alte Installation), greift das Theme-Symbol.
+ERSATZ_SYMBOL = {
+    "pbs-desk": "drive-harddisk",
+    "pbs-desk-laeuft": "media-playback-start",
+    "pbs-desk-warnung": "dialog-warning",
+}
+
+
+SYMBOL_ORDNER = "/usr/share/icons/hicolor/scalable/apps"
+
+
+def symbol(name):
+    """Eigenes Symbol direkt aus der Datei laden.
+
+    Ueber den Theme-Namen reicht Qt nur den Namen an die Leiste weiter, und Plasma
+    zeigt dann seine zwischengespeicherte alte Fassung, bis man sich neu anmeldet.
+    """
+    pfad = os.path.join(SYMBOL_ORDNER, name + ".svg")
+    if os.path.exists(pfad):
+        return QIcon(pfad)
+    return QIcon.fromTheme(name, QIcon.fromTheme(ERSATZ_SYMBOL[name]))
+
+
+class AbschaltDialog(QDialog):
+    """Countdown vor dem Herunterfahren; Abbrechen laesst den Rechner an."""
+    SEKUNDEN = 60
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(PROGRAMM)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
+        self.rest = self.SEKUNDEN
+        self.text = QLabel()
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.text)
+        knoepfe = QDialogButtonBox()
+        knoepfe.addButton(_("Jetzt herunterfahren"), QDialogButtonBox.ButtonRole.AcceptRole)
+        knoepfe.addButton(_("Abbrechen"), QDialogButtonBox.ButtonRole.RejectRole)
+        knoepfe.accepted.connect(self.accept)
+        knoepfe.rejected.connect(self.reject)
+        lay.addWidget(knoepfe)
+        self.uhr = QTimer(self)
+        self.uhr.timeout.connect(self.ticken)
+        self.uhr.start(1000)
+        self.zeigen()
+
+    def zeigen(self):
+        self.text.setText(_("Das Backup ist fertig.\nDer Rechner fährt in {sekunden} Sekunden herunter.")
+                          .format(sekunden=self.rest))
+
+    def ticken(self):
+        self.rest -= 1
+        if self.rest <= 0:
+            self.accept()
+        else:
+            self.zeigen()
+
+
+class Tray(QSystemTrayIcon):
+    def __init__(self):
+        super().__init__()
+        self.menu = QMenu()
+        self.setContextMenu(self.menu)
+        self.menu.aboutToShow.connect(self.menue_bauen)
+        self.activated.connect(self.geklickt)
+        self._abschalten = None
+        self.aktualisieren()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.aktualisieren)
+        self.timer.start(10_000)
+        self.show()
+
+    # --- Anzeige ---------------------------------------------------------
+    def aktualisieren(self):
+        aktiv, roh = laeuft()
+        d, alter = letzter_erfolg()
+        rate, quelle = naechste_rate()
+
+        if aktiv:
+            icon, kopf = "pbs-desk-laeuft", _("Backup läuft gerade")
+            fs = fortschritt()
+            lr, lq = laufende_rate()
+            tempo = _("Tempo: {rate}").format(rate=lr) + (f" ({lq})" if lq else "") if lr else None
+            zeilen = [kopf, fs or _("startet …")]
+            lz = laufendes_ziel()
+            if lz:
+                zeilen.append(_("Ziel: {ziel}").format(ziel=lz))
+            if tempo:
+                zeilen.append(tempo)
+            zeilen += ["", _("Bitte nicht herunterfahren.")]
+        else:
+            if alter is None:
+                icon, kopf = "pbs-desk-warnung", _("Noch kein erfolgreiches Backup")
+                zeilen = [kopf]
+            else:
+                if alter == 0:
+                    icon, kopf = "pbs-desk", _("Heute gesichert ✓")
+                elif alter >= 3:
+                    icon, kopf = "pbs-desk-warnung", _("Backup überfällig ({tage} Tage)").format(tage=alter)
+                elif alter == 1:
+                    icon, kopf = "pbs-desk", _("Letztes Backup vor einem Tag")
+                else:
+                    icon, kopf = "pbs-desk", _("Letztes Backup vor {tage} Tagen").format(tage=alter)
+                # Datumsformat ist selbst ein Uebersetzungstext (strftime-Muster).
+                zeilen = [kopf, _("Letzter Erfolg: {datum}").format(datum=d.strftime(_("%d.%m.%Y")))]
+            if letztes_ziel() and alter is not None:
+                zeilen.append(_("Gesichert nach: {ziel}").format(ziel=letztes_ziel()))
+            if mobil():
+                zeilen.append(_("Unterwegs (Offsite): {rate} ({quelle})").format(rate=rate, quelle=quelle))
+
+        if self._abschalten:
+            zeilen.append(_("Danach fährt der Rechner herunter."))
+            self.abschalten_pruefen(aktiv)
+
+        self.setIcon(symbol(icon))
+        self.setToolTip(_("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet())
+                        + "\n" + "\n".join(zeilen))
+        self._aktiv, self._roh, self._kopf = aktiv, roh, kopf
+
+    def geklickt(self, grund):
+        if grund == QSystemTrayIcon.ActivationReason.Trigger:
+            self.aktualisieren()
+            self.showMessage(_("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet()),
+                             self.toolTip().split("\n", 1)[1],
+                             symbol("pbs-desk"), 8000)
+
+    # --- Menue -----------------------------------------------------------
+    def menue_bauen(self):
+        self.aktualisieren()
+        m = self.menu
+        m.clear()
+        # Die Infozeilen bleiben aktiv: ausgegraut sind sie in Plasma kaum lesbar.
+
+        name = m.addAction(symbol("pbs-desk"),
+                           _("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet()))
+        m.addSeparator()
+        kopf = m.addAction(self._kopf)
+        if self._aktiv:
+            fs = fortschritt()
+            if fs:
+                a = m.addAction("   " + fs)
+            lr, lq = laufende_rate()
+            if lr:
+                a = m.addAction("   " + _("Tempo dieses Laufs: {rate}").format(rate=lr)
+                                + (f" ({lq})" if lq else ""))
+        m.addSeparator()
+
+        if mobil():
+            self.drossel_menue(m)
+            m.addSeparator()
+        if self._aktiv:
+            a = m.addAction(_("Backup läuft bereits"))
+            a.setEnabled(False)
+        else:
+            m.addAction(_("Backup jetzt starten …")).triggered.connect(self.starten)
+        # Merker gilt nur fuer diese Sitzung: Abmelden oder Tray-Neustart hebt ihn auf.
+        a = QAction(_("Nach dem Backup herunterfahren") if self._aktiv
+                    else _("Sichern und danach herunterfahren"), m)
+        a.setCheckable(True)
+        a.setChecked(self._abschalten is not None)
+        a.toggled.connect(self.abschalten_umschalten)
+        m.addAction(a)
+        m.addAction(_("Wiederherstellen …")).triggered.connect(self.wiederherstellen)
+        m.addAction(_("Protokoll anzeigen …")).triggered.connect(self.protokoll)
+        m.addAction(_("Einstellungen …")).triggered.connect(self.einstellungen)
+        m.addSeparator()
+        m.addAction(_("Tray beenden")).triggered.connect(QApplication.quit)
+
+    def drossel_menue(self, m):
+        """Nur mobile Geraete: die Drossel gilt allein fuer den Offsite-Zweig."""
+        rate, quelle = naechste_rate()
+        titel = m.addAction(_("Drossel unterwegs (Offsite): {rate}").format(rate=rate))
+        titel.setEnabled(False)
+        ov = override_heute()
+        gruppe = QActionGroup(m)
+        gruppe.setExclusive(True)
+        for schluessel, text in (("auto", _("Automatik (nach Uhrzeit)")),
+                                 ("voll", _("Heute volle Fahrt")),
+                                 ("langsam", _("Heute bremsen"))):
+            a = QAction(text, m)
+            a.setCheckable(True)
+            a.setChecked((ov or "auto") == schluessel)
+            a.triggered.connect(lambda _=False, s=schluessel: self.rate_setzen(s))
+            gruppe.addAction(a)
+            m.addAction(a)
+
+    # --- Aktionen --------------------------------------------------------
+    def rate_setzen(self, schluessel):
+        # pbs-rate laeuft ohne pkexec und erbt die Umgebung; LANGUAGE legt seine
+        # Sprache trotzdem ausdruecklich fest, damit sie zur Oberflaeche passt.
+        rc, out, err = lauf(PBS_RATE, schluessel,
+                            env=dict(os.environ, LANGUAGE="de" if _sprache_deutsch() else "en"))
+        self.aktualisieren()
+        if rc != 0:
+            QMessageBox.warning(None, PROGRAMM, _("pbs-rate {aktion} schlug fehl:\n{fehler}").format(
+                aktion=schluessel, fehler=err or out))
+
+    def starten(self):
+        # Ohne sudo: systemctl fragt ueber polkit grafisch nach Berechtigung.
+        rc, out, err = lauf("systemctl", "start", "--no-block", UNIT, timeout=120)
+        if rc != 0:
+            QMessageBox.warning(None, PROGRAMM, _("Start fehlgeschlagen:\n{fehler}").format(fehler=err or out))
+            return False
+        else:
+            QTimer.singleShot(3000, self.aktualisieren)
+        return True
+
+    def abschalten_umschalten(self, an):
+        if not an:
+            self._abschalten = None
+            self.aktualisieren()
+            return
+        aktiv, _roh = laeuft()
+        self._abschalten = {"kennung": lauf_kennung(), "stempel": stempel(), "gesehen": aktiv}
+        if not aktiv and not self.starten():
+            self._abschalten = None
+        self.aktualisieren()
+
+    def abschalten_pruefen(self, aktiv):
+        """Fertig ist ein Lauf, der aktiv war oder eine neue InvocationID hat."""
+        z = self._abschalten
+        if aktiv:
+            z["gesehen"] = True
+        elif z["gesehen"] or lauf_kennung() != z["kennung"]:
+            self._abschalten = None
+            QTimer.singleShot(0, lambda: self.lauf_fertig(z))
+
+    def lauf_fertig(self, z):
+        # Ohne neuen Erfolgsstempel (Fehler, Akku, Server weg) bleibt der Rechner an.
+        if stempel() == z["stempel"]:
+            self.showMessage(PROGRAMM, _("Kein erfolgreiches Backup – der Rechner bleibt an.")
+                             + "\n" + letzte_meldung(), symbol("pbs-desk-warnung"), 0)
+            return
+        if AbschaltDialog().exec() == QDialog.DialogCode.Accepted and not herunterfahren():
+            QMessageBox.warning(None, PROGRAMM, _("Herunterfahren fehlgeschlagen."))
+
+    def wiederherstellen(self):
+        subprocess.Popen([PBS_RESTORE], start_new_session=True)
+
+    def einstellungen(self):
+        dlg = EinstellungenDialog()
+        dlg.exec()
+        self.aktualisieren()
+
+    def protokoll(self):
+        for term in (["konsole", "-e"], ["x-terminal-emulator", "-e"], ["xterm", "-e"]):
+            try:
+                subprocess.Popen(term + ["journalctl", "-u", UNIT, "-f", "-n", "80"])
+                return
+            except FileNotFoundError:
+                continue
+        QMessageBox.information(None, PROGRAMM,
+                                _("Kein Terminal gefunden.\n\n{befehl}").format(
+                                    befehl=f"journalctl -u {UNIT} -f"))
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName(PROGRAMM)
+    # Unter Wayland holt Plasma das Fenstersymbol aus dem Starter-Eintrag
+    # gleichen Namens; ohne ihn bleiben Einstellungen und Meldungen symbollos.
+    app.setDesktopFileName("pbs-desk-tray")
+    app.setWindowIcon(symbol("pbs-desk"))
+    if not QSystemTrayIcon.isSystemTrayAvailable():
+        print(_("Kein System-Tray verfügbar."), file=sys.stderr)
+        return 1
+    # Referenz halten: ohne Parent wuerde Python das Objekt sofort einsammeln
+    # und das Tray-Icon verschwaende lautlos (Event-Loop laeuft dann leer weiter).
+    tray = Tray()
+    app._tray = tray
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

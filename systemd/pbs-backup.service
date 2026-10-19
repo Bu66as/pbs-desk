@@ -1,0 +1,17 @@
+[Unit]
+Description=PBS-Backup (Snapper-Pre + proxmox-backup-client)
+Documentation=man:proxmox-backup-client(1)
+After=network-online.target
+Wants=network-online.target
+# Mindestens ein Ziel mit Zugangsdaten (| = es reicht eine der Bedingungen)
+ConditionPathExists=|/etc/proxmox-backup-client/lokal/token
+ConditionPathExists=|/etc/proxmox-backup-client/lan/token
+ConditionPathExists=|/etc/proxmox-backup-client/offsite/token
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pbs-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=48h

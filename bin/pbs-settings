@@ -1,0 +1,357 @@
+#!/usr/bin/python3
+"""Lokale Einstellungen des PBS-Backups (Uhrzeiten, Arbeitszeit, Drossel).
+
+Schreibt /etc/pbs-backup.local und das Timer-Drop-in
+/etc/systemd/system/pbs-backup.timer.d/lokal.conf. Beide Dateien gehoeren dem
+Benutzer des Geraets, nicht der zentralen Konfiguration: wer diese verteilt,
+ueberschreibt nur /etc/default/pbs-backup und die Haupt-Units, die lokalen
+Werte bleiben stehen. Gespeichert werden nur Werte, die vom Standard der
+zentralen Konfiguration (/etc/default/pbs-backup) abweichen; alles andere
+folgt weiter dieser.
+
+Aufruf (als root, aus dem Tray per pkexec):
+  pbs-settings [--lang=de|en] show
+  pbs-settings [--lang=de|en] set [--token-stdin] KEY=WERT [KEY=WERT ...]
+  pbs-settings [--lang=de|en] reset
+  pbs-settings [--lang=de|en] server-test
+
+--lang muss das erste Argument sein und bestimmt die Sprache der Meldungen.
+pkexec loescht die Umgebung, deshalb gibt der Tray die Sprache so mit. Ohne
+--lang: Sprache der Umgebung, ohne Sprachvariablen Deutsch. Maschinell
+ausgewertet werden nur Returncode und die Praefixe "OK:"/"FEHLER:" (bleiben
+unuebersetzt) sowie die KEY=WERT-Zeilen von show.
+
+Eigener Backup-Server (nur auf Geraeten, die nicht zentral verwaltet sind):
+SERVER_HOST, SERVER_PORT, SERVER_DATASTORE, SERVER_AUTHID, SERVER_NS,
+SERVER_ID, SERVER_FINGERPRINT. Das Token-Geheimnis kommt mit --token-stdin
+ueber die Standardeingabe, nie ueber die Kommandozeile. Leeres SERVER_HOST
+entfernt den Server samt Token.
+"""
+import gettext
+import os
+import re
+import subprocess
+import sys
+
+LOCALEDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "share", "locale")
+
+
+def _sprache_deutsch():
+    """Deutsch, wenn die erste Sprache der Umgebung de ist; sonst Englisch."""
+    for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        w = os.environ.get(v, "")
+        if w:
+            return w.split(":")[0].lower().startswith("de")
+    return False
+
+
+_ = (gettext.NullTranslations() if _sprache_deutsch() else
+     gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+
+def sprache_setzen(argv):
+    """Optionales erstes Argument --lang=de|en auswerten und aus argv entfernen.
+
+    Das Argument hat Vorrang vor der Umgebung. Fehlt es und ist keine
+    Sprachvariable gesetzt (pkexec loescht die Umgebung), gilt Deutsch.
+    """
+    global _
+    if len(argv) > 1 and argv[1].startswith("--lang="):
+        deutsch = argv.pop(1)[len("--lang="):].lower().startswith("de")
+    elif any(os.environ.get(v) for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG")):
+        deutsch = _sprache_deutsch()
+    else:
+        deutsch = True
+    _ = (gettext.NullTranslations() if deutsch else
+         gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+CONF = "/etc/default/pbs-backup"
+LOKAL = "/etc/pbs-backup.local"
+DROPIN_DIR = "/etc/systemd/system/pbs-backup.timer.d"
+DROPIN = os.path.join(DROPIN_DIR, "lokal.conf")
+CRED_BASE = "/etc/proxmox-backup-client"
+CRED = os.path.join(CRED_BASE, "lokal")
+
+STUNDE = re.compile(r"^([01]?\d|2[0-3])$")
+RATE = re.compile(r"^(\d+(\.\d+)?[KMGT]i?B)?$")
+UHRZEIT = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+# Schluessel -> Pruefung. ZEITEN ist nur lokal (Standard steht im Haupt-Timer pbs-backup.timer).
+ERLAUBT = {
+    "ZEITEN": None,
+    "ARBEITSZEIT_SKIP": re.compile(r"^[01]$"),
+    "WORK_START": STUNDE,
+    "WORK_END": STUNDE,
+    "PBS_RATE_TAG": RATE,
+    "PBS_RATE_ABEND": RATE,
+    "PBS_RATE_NACHT": RATE,
+    "ABEND_START": STUNDE,
+    "NACHT_START": STUNDE,
+}
+
+# Eigener Server. Reihenfolge = Reihenfolge in der Datei.
+SERVER = {
+    "SERVER_HOST": re.compile(r"^([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)?$"),
+    "SERVER_PORT": re.compile(r"^([1-9]\d{0,4})?$"),
+    "SERVER_DATASTORE": re.compile(r"^([A-Za-z0-9_][A-Za-z0-9._-]*)?$"),
+    "SERVER_AUTHID": re.compile(r"^([A-Za-z0-9._-]+@[A-Za-z0-9._-]+![A-Za-z0-9._-]+)?$"),
+    "SERVER_NS": re.compile(r"^([A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*)?$"),
+    "SERVER_ID": re.compile(r"^([A-Za-z0-9_][A-Za-z0-9._-]*)?$"),
+    "SERVER_FINGERPRINT": re.compile(r"^(([0-9a-f]{2}:){31}[0-9a-f]{2})?$"),
+}
+PFLICHT = ("SERVER_DATASTORE", "SERVER_AUTHID", "SERVER_FINGERPRINT")
+
+
+def lies(pfad):
+    werte = {}
+    try:
+        with open(pfad) as f:
+            for zeile in f:
+                zeile = zeile.strip()
+                if not zeile or zeile.startswith("#") or "=" not in zeile:
+                    continue
+                k, v = zeile.split("=", 1)
+                werte[k.strip()] = v.split("#")[0].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return werte
+
+
+def zeiten_normalisieren(text):
+    """'17, 19:30 21' -> ['17:00', '19:30', '21:00'], sortiert, ohne Doppelte."""
+    ergebnis = set()
+    for teil in re.split(r"[,;\s]+", text.strip()):
+        if not teil:
+            continue
+        if STUNDE.match(teil):
+            teil += ":00"
+        m = UHRZEIT.match(teil)
+        if not m:
+            raise ValueError(_("Uhrzeit '{wert}' ungültig (erwartet HH:MM)").format(wert=teil))
+        ergebnis.add(f"{int(m.group(1)):02d}:{m.group(2)}")
+    return sorted(ergebnis)
+
+
+def verwaltet():
+    """Zentral verwaltet = es liegt eine zentrale Konfiguration vor, die den
+    Server nicht ausdruecklich freigibt (VERWALTET=0)."""
+    return os.path.exists(CONF) and lies(CONF).get("VERWALTET", "1") != "0"
+
+
+def repository(w):
+    return (f"{w['SERVER_AUTHID']}@{w['SERVER_HOST']}:"
+            f"{w.get('SERVER_PORT') or '8007'}:{w['SERVER_DATASTORE']}")
+
+
+def schreibe(pfad, text, modus):
+    tmp = pfad + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text + "\n")
+    os.chmod(tmp, modus)
+    os.replace(tmp, pfad)
+
+
+def server_schreiben(lokal, token):
+    """Zugangsdaten unter CRED ablegen bzw. entfernen. token=None: behalten."""
+    if not lokal.get("SERVER_HOST"):
+        for name in ("token", "repository", "server-fingerprint"):
+            try:
+                os.remove(os.path.join(CRED, name))
+            except FileNotFoundError:
+                pass
+        if os.path.isdir(CRED):
+            os.rmdir(CRED)
+        return
+    os.makedirs(CRED, mode=0o700, exist_ok=True)
+    schreibe(os.path.join(CRED, "repository"), repository(lokal), 0o644)
+    schreibe(os.path.join(CRED, "server-fingerprint"), lokal["SERVER_FINGERPRINT"], 0o644)
+    if token is not None:
+        schreibe(os.path.join(CRED, "token"), token, 0o600)
+
+
+def server_test():
+    lokal = lies(LOKAL)
+    if not lokal.get("SERVER_HOST") or not os.path.exists(os.path.join(CRED, "token")):
+        print("FEHLER: " + _("kein eigener Server gespeichert"), file=sys.stderr)
+        return 1
+    with open(os.path.join(CRED, "token")) as f:
+        token = f.read().strip()
+    umgebung = dict(os.environ, PBS_PASSWORD=token, PBS_FINGERPRINT=lokal["SERVER_FINGERPRINT"])
+    befehl = ["proxmox-backup-client", "snapshot", "list", "--repository", repository(lokal),
+              "--output-format", "json"]
+    if lokal.get("SERVER_NS"):
+        befehl += ["--ns", lokal["SERVER_NS"]]
+    try:
+        p = subprocess.run(befehl, env=umgebung, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"FEHLER: {e}", file=sys.stderr)
+        return 1
+    if p.returncode != 0:
+        print(f"FEHLER: {p.stderr.strip() or p.stdout.strip()}", file=sys.stderr)
+        return 1
+    print("OK: " + _("Anmeldung an {host} klappt, Namespace lesbar.").format(host=lokal["SERVER_HOST"]))
+    return 0
+
+
+def pruefen(k, v):
+    if k in SERVER:
+        if k == "SERVER_FINGERPRINT":
+            v = v.lower()
+        if not SERVER[k].match(v):
+            raise ValueError(_("{schluessel}='{wert}' ungültig").format(schluessel=k, wert=v))
+        return v
+    if k not in ERLAUBT:
+        raise ValueError(_("unbekannte Einstellung '{schluessel}'").format(schluessel=k))
+    if k == "ZEITEN":
+        return ",".join(zeiten_normalisieren(v))
+    if not ERLAUBT[k].match(v):
+        raise ValueError(_("{schluessel}='{wert}' ungültig").format(schluessel=k, wert=v))
+    if ERLAUBT[k] is STUNDE:
+        v = str(int(v))
+    return v
+
+
+def dropin_schreiben(zeiten):
+    if not zeiten:
+        if os.path.exists(DROPIN):
+            os.remove(DROPIN)
+        return
+    os.makedirs(DROPIN_DIR, exist_ok=True)
+    zeilen = ["# Lokale Backup-Uhrzeiten (pbs-settings / Tray). Die zentrale Konfiguration fasst "
+              "diese Datei nicht an.",
+              "[Timer]", "OnCalendar="]
+    zeilen += [f"OnCalendar=*-*-* {z}:00" for z in zeiten.split(",")]
+    with open(DROPIN, "w") as f:
+        f.write("\n".join(zeilen) + "\n")
+
+
+def timer_neu_laden():
+    subprocess.run(["systemctl", "daemon-reload"], check=False)
+    subprocess.run(["systemctl", "restart", "pbs-backup.timer"], check=False)
+
+
+def speichern(lokal):
+    kopf = ("# Lokale Einstellungen des PBS-Backups (pbs-settings / Tray-Dialog).\n"
+            "# Ueberschreibt einzelne Werte aus /etc/default/pbs-backup; die zentrale\n"
+            "# Konfiguration fasst diese Datei nicht an. Nur Abweichungen vom Standard.\n")
+    if not lokal:
+        if os.path.exists(LOKAL):
+            os.remove(LOKAL)
+    else:
+        tmp = LOKAL + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(kopf)
+            for k in list(ERLAUBT) + list(SERVER):
+                if k in lokal:
+                    f.write(f'{k}="{lokal[k]}"\n')
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, LOKAL)
+    dropin_schreiben(lokal.get("ZEITEN", ""))
+    timer_neu_laden()
+
+
+def nutzung():
+    return _("Aufruf (als root, aus dem Tray per pkexec):\n"
+             "  pbs-settings [--lang=de|en] show\n"
+             "  pbs-settings [--lang=de|en] set [--token-stdin] KEY=WERT [KEY=WERT ...]\n"
+             "  pbs-settings [--lang=de|en] reset\n"
+             "  pbs-settings [--lang=de|en] server-test")
+
+
+def main(argv):
+    argv = list(argv)
+    sprache_setzen(argv)
+    if len(argv) < 2 or argv[1] not in ("show", "set", "reset", "server-test"):
+        print(nutzung(), file=sys.stderr)
+        return 2
+    if argv[1] == "show":
+        std, lokal = lies(CONF), lies(LOKAL)
+        for k in ERLAUBT:
+            if k in lokal:
+                print(f"{k}={lokal[k]}  " + _("(lokal, Standard: {standard})").format(standard=std.get(k, "-")))
+            else:
+                print(f"{k}={std.get(k, '-')}")
+        for k in SERVER:
+            if lokal.get(k):
+                print(f"{k}={lokal[k]}  " + _("(eigener Server)"))
+        return 0
+    if os.geteuid() != 0:
+        print(_("pbs-settings: braucht root (sudo oder pkexec)"), file=sys.stderr)
+        return 1
+    if argv[1] == "server-test":
+        return server_test()
+    if argv[1] == "reset":
+        # Der eigene Server ist keine Abweichung vom Standard, er bleibt.
+        speichern({k: v for k, v in lies(LOKAL).items() if k in SERVER})
+        print("OK: " + _("lokale Einstellungen entfernt, es gilt wieder der Standard."))
+        return 0
+
+    std, lokal = lies(CONF), lies(LOKAL)
+    lokal = {k: v for k, v in lokal.items() if k in ERLAUBT or k in SERVER}
+    args = [a for a in argv[2:] if a != "--token-stdin"]
+    token = None
+    if "--token-stdin" in argv[2:]:
+        token = sys.stdin.readline().strip() or None
+    server_geaendert = False
+    try:
+        for arg in args:
+            if "=" not in arg:
+                raise ValueError(_("'{arg}' ist kein KEY=WERT").format(arg=arg))
+            k, v = arg.split("=", 1)
+            k = k.strip()
+            v = pruefen(k, v.strip())
+            if k in SERVER:
+                if verwaltet():
+                    raise ValueError(_("Dieses Gerät wird zentral verwaltet, "
+                                       "der Server lässt sich hier nicht ändern"))
+                server_geaendert = True
+                if v:
+                    lokal[k] = v
+                else:
+                    lokal.pop(k, None)
+                continue
+            # Nur Abweichungen merken; ZEITEN leer = Standard aus pbs-backup.timer
+            if (k == "ZEITEN" and not v) or (k != "ZEITEN" and v == std.get(k)):
+                lokal.pop(k, None)
+            else:
+                lokal[k] = v
+        if server_geaendert and lokal.get("SERVER_HOST"):
+            fehlt = [k for k in PFLICHT if not lokal.get(k)]
+            if fehlt:
+                raise ValueError(_("für den Server fehlt: {felder}").format(felder=", ".join(fehlt)))
+            if token is None and not os.path.exists(os.path.join(CRED, "token")):
+                raise ValueError(_("für den Server fehlt das Token-Geheimnis"))
+            if token is not None and not re.match(r"^[\x21-\x7e]{8,200}$", token):
+                raise ValueError(_("Token-Geheimnis ungültig"))
+        elif server_geaendert:
+            for k in SERVER:
+                lokal.pop(k, None)
+    except ValueError as e:
+        print(f"FEHLER: {e}", file=sys.stderr)
+        return 1
+    ws, we = int(lokal.get("WORK_START", std.get("WORK_START", 8))), int(lokal.get("WORK_END", std.get("WORK_END", 17)))
+    if ws >= we:
+        print("FEHLER: " + _("Arbeitszeit-Beginn muss vor dem Ende liegen"), file=sys.stderr)
+        return 1
+    if server_geaendert:
+        server_schreiben(lokal, token)
+    speichern(lokal)
+    if any(k in ERLAUBT for k in lokal):
+        text = _("gespeichert ({schluessel} lokal)").format(
+            schluessel=", ".join(sorted(k for k in lokal if k in ERLAUBT)))
+    else:
+        text = _("gespeichert, Zeiten und Drossel auf Standard")
+    if lokal.get("SERVER_HOST"):
+        text += _(", Server {host}").format(host=lokal["SERVER_HOST"])
+    print("OK: " + text)
+    skip = lokal.get("ARBEITSZEIT_SKIP", std.get("ARBEITSZEIT_SKIP", "1")) == "1"
+    gesperrt = [z for z in lokal.get("ZEITEN", "").split(",") if z and skip and ws <= int(z[:2]) < we]
+    if gesperrt:
+        print(_("Hinweis: {zeiten} liegt in der Arbeitszeit ({beginn}-{ende} Uhr) "
+                "und greift deshalb nur am Wochenende.").format(zeiten=", ".join(gesperrt), beginn=ws, ende=we))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,276 @@
+# English translation of pbs-tray (pbs-desk).
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "%d.%m.%Y"
+msgstr "%Y-%m-%d"
+
+msgid "API-Token:"
+msgstr "API token:"
+
+msgid "Abend ab:"
+msgstr "Evening from:"
+
+msgid "Abend:"
+msgstr "Evening:"
+
+msgid "Anmeldung klappt, der Namespace ist lesbar."
+msgstr "Login works, the namespace is readable."
+
+msgid "Arbeitszeit:"
+msgstr "Working hours:"
+
+msgid "Automatik (nach Uhrzeit)"
+msgstr "Automatic (by time of day)"
+
+msgid "Automatik: Abend"
+msgstr "automatic: evening"
+
+msgid "Automatik: Nacht"
+msgstr "automatic: night"
+
+msgid "Automatik: Tag"
+msgstr "automatic: day"
+
+msgid "Automatische Sicherung"
+msgstr "Automatic backup"
+
+msgid "Backup jetzt starten …"
+msgstr "Start backup now …"
+
+msgid "Backup läuft bereits"
+msgstr "Backup already running"
+
+msgid "Backup läuft gerade"
+msgstr "Backup in progress"
+
+msgid "Backup überfällig ({tage} Tage)"
+msgstr "Backup overdue ({tage} days)"
+
+msgid "Backup-ID:"
+msgstr "Backup ID:"
+
+msgid "Backup-Server"
+msgstr "Backup server"
+
+msgid "Benutzer und Token-Name in der Form benutzer@realm!tokenname"
+msgstr "User and token name in the form user@realm!tokenname"
+
+msgid "Bitte das Token-Geheimnis eintragen."
+msgstr "Please enter the token secret."
+
+msgid "Bitte nicht herunterfahren."
+msgstr "Please do not shut down."
+
+msgid "Bitte zuerst den Server eintragen."
+msgstr "Please enter the server first."
+
+msgid "Datastore:"
+msgstr "Datastore:"
+
+msgid "Der Server {host}:{port} meldet diesen Fingerabdruck:\n\n{fp}\n\nStimmt er mit der Anzeige im PBS überein (Dashboard → Fingerabdruck anzeigen)? Nur dann übernehmen."
+msgstr "The server {host}:{port} reports this fingerprint:\n\n{fp}\n\nDoes it match the one shown in PBS (Dashboard → Show Fingerprint)? Only accept it if it does."
+
+msgid "Dieses Gerät wird zentral verwaltet. Server und Zugangsdaten kommen aus der Verwaltung und lassen sich hier nicht ändern."
+msgstr "This device is centrally managed. Server and credentials are provided by the central configuration and cannot be changed here."
+
+msgid "Drossel unterwegs (Offsite): {rate}"
+msgstr "Bandwidth limit on the road (offsite): {rate}"
+
+msgid "Drossel unterwegs (nur Offsite, im LAN immer frei)"
+msgstr "Bandwidth limit on the road (offsite only, never limited on the LAN)"
+
+msgid "Einstellungen …"
+msgstr "Settings …"
+
+msgid "Fehler (rc={rc})"
+msgstr "Error (rc={rc})"
+
+msgid "Fingerabdruck:"
+msgstr "Fingerprint:"
+
+msgid "Gesichert nach: {ziel}"
+msgstr "Backed up to: {ziel}"
+
+msgid "Gespeichert."
+msgstr "Saved."
+
+msgid "Handschalter: gebremst"
+msgstr "manual: throttled"
+
+msgid "Handschalter: volle Fahrt"
+msgstr "manual: full speed"
+
+msgid "Heute bremsen"
+msgstr "Throttle today"
+
+msgid "Heute gesichert ✓"
+msgstr "Backed up today ✓"
+
+msgid "Heute volle Fahrt"
+msgstr "Full speed today"
+
+msgid "Kein System-Tray verfügbar."
+msgstr "No system tray available."
+
+msgid "Kein Terminal gefunden.\n\n{befehl}"
+msgstr "No terminal found.\n\n{befehl}"
+
+msgid "LAN: frei"
+msgstr "LAN: unlimited"
+
+msgid "Letzter Erfolg: {datum}"
+msgstr "Last success: {datum}"
+
+msgid "Letztes Backup vor einem Tag"
+msgstr "Last backup one day ago"
+
+msgid "Letztes Backup vor {tage} Tagen"
+msgstr "Last backup {tage} days ago"
+
+msgid "Liegt danach nur in einer Datei, die allein root lesen darf."
+msgstr "Stored afterwards only in a file readable by root alone."
+
+msgid "Mo–Fr während der Arbeitszeit nicht sichern"
+msgstr "No backups during working hours Mon–Fri"
+
+msgid "Nacht ab:"
+msgstr "Night from:"
+
+msgid "Nacht:"
+msgstr "Night:"
+
+msgid "Name der Sicherung auf dem Server. Leer = Rechnername."
+msgstr "Name of the backup on the server. Empty = host name."
+
+msgid "Name oder IPv4-Adresse des Proxmox Backup Servers. Leer = kein eigener Server."
+msgstr "Name or IPv4 address of the Proxmox Backup Server. Empty = no custom server."
+
+msgid "Namespace:"
+msgstr "Namespace:"
+
+msgid "Noch kein erfolgreiches Backup"
+msgstr "No successful backup yet"
+
+msgid "Port:"
+msgstr "Port:"
+
+msgid "Protokoll anzeigen …"
+msgstr "Show log …"
+
+msgid "Server:"
+msgstr "Server:"
+
+msgid "Standard wiederherstellen"
+msgstr "Restore Defaults"
+
+msgid "Standard: {zeiten} · Start streut bis 20 min · nächster Versuch: {naechster}"
+msgstr "Default: {zeiten} · start is randomly delayed by up to 20 min · next attempt: {naechster}"
+
+msgid "Start fehlgeschlagen:\n{fehler}"
+msgstr "Start failed:\n{fehler}"
+
+msgid "Tag:"
+msgstr "Day:"
+
+msgid "Tempo dieses Laufs: {rate}"
+msgstr "Speed of this run: {rate}"
+
+msgid "Tempo: {rate}"
+msgstr "Speed: {rate}"
+
+msgid "Token-Geheimnis:"
+msgstr "Token secret:"
+
+msgid "Tray beenden"
+msgstr "Quit tray"
+
+msgid "Uhrzeiten, Arbeitszeit und Drossel auf den Standard zurücksetzen? Ein eingetragener Server bleibt."
+msgstr "Reset times, working hours and bandwidth limit to the defaults? A configured server is kept."
+
+msgid "Uhrzeiten:"
+msgstr "Times:"
+
+msgid "Unterwegs (Offsite): {rate} ({quelle})"
+msgstr "On the road (offsite): {rate} ({quelle})"
+
+msgid "Verbindung testen"
+msgstr "Test connection"
+
+msgid "Versuche pro Tag, durch Komma getrennt (HH:MM). Gesichert wird höchstens einmal pro Tag; der erste Versuch, der klappt, zählt.\nLeer = Standard ({zeiten})."
+msgstr "Attempts per day, separated by commas (HH:MM). At most one backup is made per day; the first attempt that succeeds counts.\nEmpty = default ({zeiten})."
+
+msgid "Vom Server holen"
+msgstr "Fetch from server"
+
+msgid "Wiederherstellen …"
+msgstr "Restore …"
+
+msgid "Ziel: {ziel}"
+msgstr "Target: {ziel}"
+
+msgid "bis"
+msgstr "to"
+
+msgid "leer = oberste Ebene"
+msgstr "empty = root namespace"
+
+msgid "pbs-rate {aktion} schlug fehl:\n{fehler}"
+msgstr "pbs-rate {aktion} failed:\n{fehler}"
+
+msgid "pbs.example.org oder 192.168.1.10"
+msgstr "pbs.example.org or 192.168.1.10"
+
+msgid "startet …"
+msgstr "starting …"
+
+msgid "unbegrenzt"
+msgstr "unlimited"
+
+msgid "unverändert"
+msgstr "unchanged"
+
+msgid "vom Server holen und mit der Anzeige im PBS vergleichen"
+msgstr "fetch from the server and compare with the value shown in PBS"
+
+msgid "von"
+msgstr "from"
+
+msgid "z.B. 2MiB, 500KiB – leer = unbegrenzt"
+msgstr "e.g. 2MiB, 500KiB – empty = unlimited"
+
+msgid "{gelesen} gelesen in {dauer}, {hochgeladen} hochgeladen"
+msgstr "{gelesen} read in {dauer}, {hochgeladen} uploaded"
+
+msgid "{host}:{port} antwortet nicht:\n{fehler}"
+msgstr "{host}:{port} is not responding:\n{fehler}"
+
+msgid "{programm} – Backup {geraet}"
+msgstr "{programm} – backup {geraet}"
+
+msgid "{programm} – Einstellungen ({geraet})"
+msgstr "{programm} – Settings ({geraet})"
+
+msgid "Abbrechen"
+msgstr "Cancel"
+
+msgid "Danach fährt der Rechner herunter."
+msgstr "The computer will shut down afterwards."
+
+msgid "Das Backup ist fertig.\nDer Rechner fährt in {sekunden} Sekunden herunter."
+msgstr "The backup is complete.\nThe computer will shut down in {sekunden} seconds."
+
+msgid "Herunterfahren fehlgeschlagen."
+msgstr "Shutdown failed."
+
+msgid "Jetzt herunterfahren"
+msgstr "Shut down now"
+
+msgid "Kein erfolgreiches Backup – der Rechner bleibt an."
+msgstr "No successful backup – the computer stays on."
+
+msgid "Nach dem Backup herunterfahren"
+msgstr "Shut down after the backup"
+
+msgid "Sichern und danach herunterfahren"
+msgstr "Back up now, then shut down"

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PBS-Desk
+GenericName=Backup status
+GenericName[de]=Backup-Anzeige
+Comment=Launcher entry for the window icon of the tray windows
+Comment[de]=Starter-Eintrag für das Fenstersymbol der Tray-Fenster
+Exec=/usr/local/bin/pbs-tray
+Icon=pbs-desk
+Terminal=false
+NoDisplay=true
+Categories=System;Utility;

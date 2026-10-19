@@ -1,0 +1,12 @@
+[Unit]
+Description=PBS-Backup-Versuche (das Skript entscheidet per Pre-Flight, ob gesichert wird)
+
+[Timer]
+# Mehrere Versuche ausserhalb der Arbeitszeit; gesichert wird max. 1x/Tag.
+OnCalendar=*-*-* 17,19,21,23:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=pbs-backup.service
+
+[Install]
+WantedBy=timers.target

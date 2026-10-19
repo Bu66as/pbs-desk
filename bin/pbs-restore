@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""Wiederherstellen und Verlauf fuer das PBS-Backup eines Endgeraets.
+
+Listet die Sicherungen auf dem Backup-Server, haengt ein Archiv per Klick
+schreibgeschuetzt ein und oeffnet es im Dateimanager; zurueckgeholt wird
+dann per Kopieren und Einfuegen. Der zweite Reiter zeigt den Verlauf der
+Backup-Laeufe aus dem Protokoll.
+
+Die Zugangsdaten sieht dieses Programm nie: Auflisten und Einhaengen macht
+der Root-Helfer pbs-restore-helper (pkexec). Aushaengen geht ohne root, weil
+die Sicherung mit der Kennung des Benutzers eingehaengt ist.
+"""
+import gettext
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime
+
+from PySide6.QtCore import QProcess, Qt
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel, QListWidget,
+                               QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
+                               QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+
+LOCALEDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "share", "locale")
+
+
+def _sprache_deutsch():
+    """Deutsch, wenn die erste Sprache der Umgebung de ist; sonst Englisch."""
+    for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        w = os.environ.get(v, "")
+        if w:
+            return w.split(":")[0].lower().startswith("de")
+    return False
+
+
+_ = (gettext.NullTranslations() if _sprache_deutsch() else
+     gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+HELFER = "/usr/local/sbin/pbs-restore-helper"
+RECHTE = os.environ.get("PBS_RESTORE_RECHTE", "pkexec")   # Umlenkung nur fuer Tests
+LOG = os.environ.get("PBS_BACKUP_LOG", "/var/log/pbs-backup.log")
+UNIT = "pbs-backup.service"
+MOUNT_BASIS = f"/run/user/{os.getuid()}/pbs-desk"
+ARCHIV_NAMEN = {"root": _("System (/)"), "home": _("Persönliche Dateien (/home)")}
+# pkexec loescht die Umgebung, der Helfer sieht LANG nicht: Sprache als erstes Argument mitgeben
+HELFER_SPRACHE = "--lang=de" if _sprache_deutsch() else "--lang=en"
+DEZIMALZEICHEN = "," if _sprache_deutsch() else "."
+
+RE_START = re.compile(r"^=== START (\S+)")
+RE_DONE = re.compile(r"^=== DONE (\S+) Ziel=(\S+) Dauer=(\d+)min")
+RE_FEHLER = re.compile(r"^=== FEHLER rc=(\d+) (\S+) Ziel=(\S+)")
+RE_ZIEL = re.compile(r"^--- Backup Ziel=(\S+)")
+
+
+def groesse(n):
+    for einheit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or einheit == "TiB":
+            return f"{n:.0f} {einheit}" if einheit in ("B", "KiB") else f"{n:.1f} {einheit}".replace(".", DEZIMALZEICHEN)
+        n /= 1024
+
+
+def alter(sekunden):
+    tage = int(sekunden // 86400)
+    if tage >= 2:
+        return _("vor {tage} Tagen").format(tage=tage)
+    if tage == 1:
+        return _("gestern")
+    stunden = int(sekunden // 3600)
+    return _("vor {stunden} Std.").format(stunden=stunden) if stunden >= 1 else _("gerade eben")
+
+
+def archiv_titel(name):
+    stamm = re.sub(r"\.(pxar|mpxar)(\.didx)?$", "", name)
+    return ARCHIV_NAMEN.get(stamm, stamm)
+
+
+def eingehaengte():
+    """Pfade unter MOUNT_BASIS, die gerade eingehaengt sind."""
+    pfade = []
+    try:
+        with open("/proc/self/mountinfo") as f:
+            for zeile in f:
+                pfad = zeile.split()[4]
+                if pfad.startswith(MOUNT_BASIS + "/"):
+                    pfade.append(pfad)
+    except OSError:
+        pass
+    return sorted(pfade)
+
+
+def mount_titel(pfad):
+    """'notebook_2026-09-29T161022Z_home' -> lesbarer Titel in Ortszeit."""
+    m = re.match(r"^(.+)_(\d{4}-\d\d-\d\dT\d{6}Z)_(.+)$", os.path.basename(pfad))
+    if not m:
+        return os.path.basename(pfad)
+    zeit = datetime.strptime(m.group(2), "%Y-%m-%dT%H%M%S%z").astimezone()
+    return _("{zeit:%d.%m.%Y %H:%M} – {bereich}").format(zeit=zeit, bereich=ARCHIV_NAMEN.get(m.group(3), m.group(3)))
+
+
+def verlauf_lesen(pfade=None):
+    """Backup-Laeufe aus dem Protokoll, neuester zuerst.
+
+    Ein Lauf reicht von einer START-Marke bis zur naechsten. Ohne DONE,
+    FEHLER oder SKIP gilt er als abgebrochen (oder laeuft noch).
+    "ergebnis" ist ein interner Schluessel, angezeigt wird ERGEBNIS_TEXT.
+    """
+    zeilen = []
+    for pfad in pfade or (LOG + ".1", LOG):
+        try:
+            with open(pfad, errors="replace") as f:
+                zeilen += f.readlines()
+        except OSError:
+            pass
+    laeufe, lauf = [], None
+    for z in zeilen:
+        m = RE_START.match(z)
+        if m:
+            lauf = {"start": m.group(1), "ergebnis": "offen", "ziel": "", "dauer": "", "hinweis": ""}
+            laeufe.append(lauf)
+            continue
+        if lauf is None:
+            continue
+        if z.startswith("SKIP:"):
+            lauf.update(ergebnis="übersprungen", hinweis=z[5:].strip())
+        elif z.startswith("MANUELL"):
+            lauf["hinweis"] = _("von Hand gestartet")
+        elif RE_ZIEL.match(z):
+            lauf["ziel"] = RE_ZIEL.match(z).group(1)
+        elif RE_DONE.match(z):
+            m = RE_DONE.match(z)
+            lauf.update(ergebnis="erfolgreich", ziel=m.group(2), dauer=f"{m.group(3)} min")
+        elif RE_FEHLER.match(z):
+            m = RE_FEHLER.match(z)
+            lauf.update(ergebnis="fehlgeschlagen", ziel=m.group(3), hinweis=_("Fehlercode {rc}").format(rc=m.group(1)))
+    laeufe.reverse()
+    return laeufe
+
+
+def backup_laeuft():
+    try:
+        p = subprocess.run(["systemctl", "is-active", UNIT], capture_output=True, text=True, timeout=5)
+        return p.stdout.strip() in ("active", "activating")
+    except Exception:
+        return False
+
+
+class Fenster(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(_("PBS-Desk – Wiederherstellen"))
+        self.setWindowIcon(QIcon.fromTheme("pbs-desk", QIcon.fromTheme("document-revert")))
+        self.resize(760, 560)
+        self.prozesse = []
+        self.ziel = ""
+        reiter = QTabWidget()
+        reiter.addTab(self._reiter_sicherungen(), _("Wiederherstellen"))
+        reiter.addTab(self._reiter_verlauf(), _("Verlauf"))
+        self.setCentralWidget(reiter)
+        self.offene_zeigen()
+        self.verlauf_zeigen()
+        self.laden()
+
+    # --- Reiter Wiederherstellen ---
+    def _reiter_sicherungen(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        v.addWidget(self.status)
+
+        self.baum = QTreeWidget()
+        self.baum.setHeaderLabels([_("Sicherung"), _("Alter"), _("Größe"), _("Geprüft")])
+        self.baum.setColumnWidth(0, 330)
+        self.baum.setColumnWidth(1, 130)
+        self.baum.itemSelectionChanged.connect(self.auswahl)
+        self.baum.itemDoubleClicked.connect(lambda *_: self.oeffnen())
+        v.addWidget(self.baum, 3)
+
+        zeile = QHBoxLayout()
+        self.knopf_oeffnen = QPushButton(QIcon.fromTheme("folder-open"), _("Im Dateimanager öffnen"))
+        self.knopf_oeffnen.setEnabled(False)
+        self.knopf_oeffnen.clicked.connect(self.oeffnen)
+        self.knopf_laden = QPushButton(QIcon.fromTheme("view-refresh"), _("Aktualisieren"))
+        self.knopf_laden.clicked.connect(self.laden)
+        zeile.addWidget(self.knopf_oeffnen)
+        zeile.addStretch()
+        zeile.addWidget(self.knopf_laden)
+        v.addLayout(zeile)
+
+        v.addWidget(QLabel(_("Geöffnete Sicherungen (schreibgeschützt, zurückholen per Kopieren und Einfügen):")))
+        self.offene = QListWidget()
+        self.offene.itemSelectionChanged.connect(self.auswahl)
+        self.offene.itemDoubleClicked.connect(lambda *_: self.zeigen())
+        v.addWidget(self.offene, 1)
+        zeile = QHBoxLayout()
+        self.knopf_zeigen = QPushButton(_("Anzeigen"))
+        self.knopf_zeigen.clicked.connect(self.zeigen)
+        self.knopf_schliessen = QPushButton(_("Schließen"))
+        self.knopf_schliessen.clicked.connect(self.schliessen)
+        zeile.addWidget(self.knopf_zeigen)
+        zeile.addWidget(self.knopf_schliessen)
+        zeile.addStretch()
+        v.addLayout(zeile)
+        return w
+
+    def helfer(self, args, fertig):
+        """Root-Helfer ohne Blockieren der Oberflaeche starten."""
+        p = QProcess(self)
+        self.prozesse.append(p)
+
+        def ende(rc, _status):
+            aus = bytes(p.readAllStandardOutput()).decode(errors="replace").strip()
+            err = bytes(p.readAllStandardError()).decode(errors="replace").strip()
+            self.prozesse.remove(p)
+            p.deleteLater()
+            fertig(rc, aus, err)
+
+        def fehlstart(fehler):
+            if fehler == QProcess.FailedToStart:   # dann kommt kein finished
+                self.prozesse.remove(p)
+                p.deleteLater()
+                fertig(1, "", _("{programm} lässt sich nicht starten").format(programm=RECHTE))
+
+        p.finished.connect(ende)
+        p.errorOccurred.connect(fehlstart)
+        p.start(RECHTE, [HELFER, HELFER_SPRACHE, *args])
+
+    @staticmethod
+    def fehlertext(rc, err):
+        if rc in (126, 127) and not err.startswith("FEHLER"):
+            return _("Anmeldung abgebrochen oder nicht erlaubt.")
+        zeilen = [z for z in err.splitlines() if z.startswith("FEHLER:")]
+        return zeilen[-1][7:].strip() if zeilen else (err.splitlines()[-1] if err else _("Fehler {rc}").format(rc=rc))
+
+    def laden(self):
+        self.knopf_laden.setEnabled(False)
+        self.status.setText(_("Sicherungen werden geladen …"))
+        self.helfer(["snapshots"], self.geladen)
+
+    def geladen(self, rc, aus, err):
+        self.knopf_laden.setEnabled(True)
+        self.baum.clear()
+        if rc != 0:
+            self.status.setText(_("Sicherungen konnten nicht geladen werden: {fehler}").format(
+                fehler=self.fehlertext(rc, err)))
+            return
+        try:
+            daten = json.loads(aus)
+        except ValueError:
+            self.status.setText(_("Die Antwort des Helfers ist nicht lesbar."))
+            return
+        self.ziel = daten["ziel"]
+        jetzt = datetime.now().timestamp()
+        for s in daten["snapshots"]:
+            zeit = datetime.fromtimestamp(s["zeit"])
+            geprueft = {"ok": _("ja"), "failed": _("FEHLERHAFT"), None: _("noch nicht")}.get(s["geprueft"], s["geprueft"])
+            oben = QTreeWidgetItem([_("{zeit:%a %d.%m.%Y %H:%M}").format(zeit=zeit), alter(jetzt - s["zeit"]),
+                                    groesse(s["groesse"]), geprueft])
+            oben.setIcon(0, QIcon.fromTheme("drive-harddisk"))
+            for a in s["archive"]:
+                kind = QTreeWidgetItem([archiv_titel(a["name"]), "", groesse(a["groesse"]),
+                                        _("verschlüsselt") if a["verschluesselt"] else ""])
+                kind.setIcon(0, QIcon.fromTheme("folder"))
+                kind.setData(0, Qt.UserRole, (s["ns"], s["snapshot"], a["name"]))
+                if a["verschluesselt"]:
+                    kind.setDisabled(True)   # braucht den Schluessel, noch nicht unterstuetzt
+                oben.addChild(kind)
+            self.baum.addTopLevelItem(oben)
+        if self.baum.topLevelItemCount():
+            self.baum.topLevelItem(0).setExpanded(True)
+        n = len(daten["snapshots"])
+        if n == 0:
+            text = _("Auf {ziel} liegt noch keine Sicherung.")
+        elif n == 1:
+            text = _("{n} Sicherung auf {ziel}. Sicherung aufklappen, Bereich wählen und öffnen.")
+        else:
+            text = _("{n} Sicherungen auf {ziel}. Sicherung aufklappen, Bereich wählen und öffnen.")
+        self.status.setText(text.format(n=n, ziel=daten["ziel_name"]))
+
+    def gewaehltes_archiv(self):
+        item = self.baum.currentItem()
+        if item is not None and item.childCount() == 1:   # Sicherung mit nur einem Archiv
+            item = item.child(0)
+        if item is None or item.isDisabled():
+            return None
+        return item.data(0, Qt.UserRole)
+
+    def auswahl(self):
+        self.knopf_oeffnen.setEnabled(self.gewaehltes_archiv() is not None)
+        gewaehlt = self.offene.currentItem() is not None
+        self.knopf_zeigen.setEnabled(gewaehlt)
+        self.knopf_schliessen.setEnabled(gewaehlt)
+
+    def oeffnen(self):
+        archiv = self.gewaehltes_archiv()
+        if archiv is None:
+            return
+        ns, snapshot, name = archiv
+        self.knopf_oeffnen.setEnabled(False)
+        self.status.setText(_("Sicherung wird geöffnet …"))
+        self.helfer(["mount", self.ziel, ns or "-", snapshot, name], self.geoeffnet)
+
+    def geoeffnet(self, rc, aus, err):
+        self.auswahl()
+        if rc != 0:
+            self.status.setText(_("Öffnen fehlgeschlagen: {fehler}").format(fehler=self.fehlertext(rc, err)))
+            return
+        pfad = aus.splitlines()[-1] if aus else ""
+        self.status.setText(_("Sicherung geöffnet. Dateien lassen sich im Dateimanager herauskopieren."))
+        self.offene_zeigen(pfad)
+        self.dateimanager(pfad)
+
+    @staticmethod
+    def dateimanager(pfad):
+        if pfad.startswith(MOUNT_BASIS + "/"):
+            subprocess.Popen(["xdg-open", pfad], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def offene_zeigen(self, markieren=None):
+        self.offene.clear()
+        for pfad in eingehaengte():
+            item = QListWidgetItem(QIcon.fromTheme("folder-open"), mount_titel(pfad))
+            item.setData(Qt.UserRole, pfad)
+            item.setToolTip(pfad)
+            self.offene.addItem(item)
+            if pfad == markieren:
+                self.offene.setCurrentItem(item)
+        self.auswahl()
+
+    def zeigen(self):
+        item = self.offene.currentItem()
+        if item is not None:
+            self.dateimanager(item.data(Qt.UserRole))
+
+    def aushaengen(self, pfad):
+        p = subprocess.run(["fusermount3", "-u", pfad], capture_output=True, text=True)
+        if p.returncode == 0:
+            try:
+                os.rmdir(pfad)
+            except OSError:
+                pass
+        return p.returncode == 0, p.stderr.strip()
+
+    def schliessen(self):
+        item = self.offene.currentItem()
+        if item is None:
+            return
+        ok, err = self.aushaengen(item.data(Qt.UserRole))
+        if not ok:
+            QMessageBox.warning(self, _("Schließen nicht möglich"),
+                                _("Die Sicherung wird noch benutzt. Bitte erst das Fenster des "
+                                  "Dateimanagers schließen.\n\n{fehler}").format(fehler=err))
+        self.offene_zeigen()
+
+    def closeEvent(self, ereignis):
+        offen = eingehaengte()
+        if offen:
+            if len(offen) == 1:
+                frage = _("Es ist noch {n} Sicherung geöffnet. Jetzt schließen?")
+            else:
+                frage = _("Es sind noch {n} Sicherungen geöffnet. Jetzt schließen?")
+            antwort = QMessageBox.question(
+                self, _("Geöffnete Sicherungen"), frage.format(n=len(offen)),
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            if antwort == QMessageBox.Cancel:
+                ereignis.ignore()
+                return
+            if antwort == QMessageBox.Yes:
+                for pfad in offen:
+                    self.aushaengen(pfad)
+        ereignis.accept()
+
+    # --- Reiter Verlauf ---
+    def _reiter_verlauf(self):
+        w = QWidget()
+        v = QVBoxLayout(w)
+        self.verlauf_status = QLabel()
+        v.addWidget(self.verlauf_status)
+        self.verlauf = QTreeWidget()
+        self.verlauf.setRootIsDecorated(False)
+        self.verlauf.setHeaderLabels([_("Start"), _("Ergebnis"), _("Ziel"), _("Dauer"), _("Hinweis")])
+        self.verlauf.setColumnWidth(0, 170)
+        self.verlauf.setColumnWidth(1, 120)
+        v.addWidget(self.verlauf)
+        zeile = QHBoxLayout()
+        self.mit_skips = QCheckBox(_("Übersprungene Läufe anzeigen"))
+        self.mit_skips.toggled.connect(self.verlauf_zeigen)
+        knopf = QPushButton(QIcon.fromTheme("view-refresh"), _("Aktualisieren"))
+        knopf.clicked.connect(self.verlauf_zeigen)
+        zeile.addWidget(self.mit_skips)
+        zeile.addStretch()
+        zeile.addWidget(knopf)
+        v.addLayout(zeile)
+        return w
+
+    def verlauf_zeigen(self, *_args):
+        self.verlauf.clear()
+        laeufe = verlauf_lesen()
+        if laeufe and laeufe[0]["ergebnis"] == "offen":
+            laeufe[0]["ergebnis"] = "läuft" if backup_laeuft() else "abgebrochen"
+        symbole = {"erfolgreich": "emblem-ok-symbolic", "fehlgeschlagen": "dialog-error",
+                   "abgebrochen": "dialog-warning", "läuft": "media-playback-start"}
+        texte = {"erfolgreich": _("erfolgreich"), "fehlgeschlagen": _("fehlgeschlagen"),
+                 "abgebrochen": _("abgebrochen"), "läuft": _("läuft"), "übersprungen": _("übersprungen")}
+        gezeigt = 0
+        for lauf in laeufe:
+            if lauf["ergebnis"] == "offen":
+                lauf["ergebnis"] = "abgebrochen"
+            if lauf["ergebnis"] == "übersprungen" and not self.mit_skips.isChecked():
+                continue
+            try:
+                start = _("{zeit:%a %d.%m.%Y %H:%M}").format(zeit=datetime.fromisoformat(lauf["start"]))
+            except ValueError:
+                start = lauf["start"]
+            item = QTreeWidgetItem([start, texte.get(lauf["ergebnis"], lauf["ergebnis"]), lauf["ziel"],
+                                    lauf["dauer"], lauf["hinweis"]])
+            if lauf["ergebnis"] in symbole:
+                item.setIcon(1, QIcon.fromTheme(symbole[lauf["ergebnis"]]))
+            self.verlauf.addTopLevelItem(item)
+            gezeigt += 1
+        if not laeufe:
+            self.verlauf_status.setText(_("Noch kein Verlauf vorhanden ({datei}).").format(datei=LOG))
+        else:
+            self.verlauf_status.setText(_("{gezeigt} von {gesamt} Läufen aus {datei}").format(
+                gezeigt=gezeigt, gesamt=len(laeufe), datei=LOG))
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setApplicationName("pbs-restore")
+    app.setDesktopFileName("pbs-restore")
+    fenster = Fenster()
+    fenster.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

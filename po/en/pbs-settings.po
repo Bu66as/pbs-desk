@@ -1,0 +1,64 @@
+# English translation of pbs-settings (PBS-Desk).
+# msgid = German source text as in the code.
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Aufruf (als root, aus dem Tray per pkexec):\n  pbs-settings [--lang=de|en] show\n  pbs-settings [--lang=de|en] set [--token-stdin] KEY=WERT [KEY=WERT ...]\n  pbs-settings [--lang=de|en] reset\n  pbs-settings [--lang=de|en] server-test"
+msgstr "Usage (as root, called by the tray via pkexec):\n  pbs-settings [--lang=de|en] show\n  pbs-settings [--lang=de|en] set [--token-stdin] KEY=VALUE [KEY=VALUE ...]\n  pbs-settings [--lang=de|en] reset\n  pbs-settings [--lang=de|en] server-test"
+
+msgid "pbs-settings: braucht root (sudo oder pkexec)"
+msgstr "pbs-settings: must be run as root (sudo or pkexec)"
+
+msgid "(lokal, Standard: {standard})"
+msgstr "(local, default: {standard})"
+
+msgid "(eigener Server)"
+msgstr "(own server)"
+
+msgid "Uhrzeit '{wert}' ungültig (erwartet HH:MM)"
+msgstr "Invalid time '{wert}' (expected HH:MM)"
+
+msgid "kein eigener Server gespeichert"
+msgstr "no own server configured"
+
+msgid "Anmeldung an {host} klappt, Namespace lesbar."
+msgstr "Login to {host} works, namespace is readable."
+
+msgid "{schluessel}='{wert}' ungültig"
+msgstr "{schluessel}='{wert}' is invalid"
+
+msgid "unbekannte Einstellung '{schluessel}'"
+msgstr "unknown setting '{schluessel}'"
+
+msgid "lokale Einstellungen entfernt, es gilt wieder der Standard."
+msgstr "local settings removed, the defaults apply again."
+
+msgid "'{arg}' ist kein KEY=WERT"
+msgstr "'{arg}' is not KEY=VALUE"
+
+msgid "Dieses Gerät wird zentral verwaltet, der Server lässt sich hier nicht ändern"
+msgstr "This device is centrally managed, the server cannot be changed here"
+
+msgid "für den Server fehlt: {felder}"
+msgstr "missing for the server: {felder}"
+
+msgid "für den Server fehlt das Token-Geheimnis"
+msgstr "the token secret for the server is missing"
+
+msgid "Token-Geheimnis ungültig"
+msgstr "invalid token secret"
+
+msgid "Arbeitszeit-Beginn muss vor dem Ende liegen"
+msgstr "working hours must start before they end"
+
+msgid "gespeichert ({schluessel} lokal)"
+msgstr "saved ({schluessel} local)"
+
+msgid "gespeichert, Zeiten und Drossel auf Standard"
+msgstr "saved, times and bandwidth limits at defaults"
+
+msgid ", Server {host}"
+msgstr ", server {host}"
+
+msgid "Hinweis: {zeiten} liegt in der Arbeitszeit ({beginn}-{ende} Uhr) und greift deshalb nur am Wochenende."
+msgstr "Note: {zeiten} falls within working hours ({beginn}:00–{ende}:00) and therefore only applies at weekends."

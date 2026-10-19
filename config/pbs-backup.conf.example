@@ -1,0 +1,47 @@
+# Beispielkonfiguration fuer pbs-desk — nach /etc/default/pbs-backup kopieren
+# und anpassen. Wird von pbs-backup, pbs-rate und pbs-tray eingelesen.
+
+DEVICE_NAME="notebook"
+BACKUP_ID="notebook"
+PBS_NS="clients/notebook"
+# 1 = mobiles Geraet: unterwegs wird gedrosselt auf das Offsite-Ziel gesichert
+MOBIL=0
+# 0 = Backup-Server im Einstellungsfenster frei waehlbar (eigene Installation)
+# 1 = Server kommt aus dieser Datei, das Einstellungsfenster sperrt ihn
+VERWALTET=0
+# Desktop-Benutzer, der die Benachrichtigungen bekommt (leer = keine)
+NOTIFY_USER=""
+
+# Ziele: Zugangsdaten unter /etc/proxmox-backup-client/<lan|offsite>/
+# (Dateien: repository, token, server-fingerprint)
+LAN_NAME="pbs-lan"
+LAN_HOST="192.0.2.10"
+LAN_PORT=8007
+OFFSITE_NAME="pbs-offsite"
+OFFSITE_HOST="198.51.100.10"
+OFFSITE_PORT=8007
+
+# Pre-Flight
+ARBEITSZEIT_SKIP=1
+WORK_START=8
+WORK_END=17
+STALE_DAYS=3
+
+# Drossel — nur fuer den Offsite-Zweig. LEER = unbegrenzt.
+PBS_RATE_TAG="2MiB"
+PBS_RATE_ABEND="4MiB"
+PBS_RATE_NACHT=""
+ABEND_START=17
+NACHT_START=22
+
+# Ausschluesse: home.pxar ankert an /home, root.pxar an /
+EXCLUDES=(
+  "/*/.cache"
+  "/*/.local/share/Trash"
+  "/*/.local/share/containers"
+  "/var/cache"
+  "/var/tmp"
+  "/var/lib/flatpak"
+  "/var/lib/plocate"
+  "/var/lib/containers"
+)

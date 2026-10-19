@@ -1,0 +1,123 @@
+#!/bin/bash
+# Handschalter fuer die Upload-Drossel des naechsten PBS-Backup-Laufs.
+# Gilt immer nur fuer den heutigen Tag und verfaellt danach von selbst.
+# Ohne Argument: zeigt an, was gerade gelten wuerde.
+set -uo pipefail
+
+OV=/var/lib/pbs-backup/rate.override
+CONF=/etc/default/pbs-backup
+HEUTE=$(date +%F)
+HOUR=$(date +%-H)
+
+PBS_RATE_TAG="2MiB"; PBS_RATE_ABEND="4MiB"; PBS_RATE_NACHT=""
+ABEND_START=17; NACHT_START=22; WORK_START=8
+# shellcheck source=/dev/null
+[[ -r "$CONF" ]] && . "$CONF"
+
+# Lokale Einstellungen (Tray-Dialog / pbs-settings); eine zentrale Verteilung
+# der Konfiguration soll diese Datei nie anfassen.
+# Nicht gesourct, sondern nur erlaubte Schluessel mit geprueftem Wert.
+LOKAL_CONF=${PBS_BACKUP_LOKAL:-/etc/pbs-backup.local}
+if [[ -r "$LOKAL_CONF" ]]; then
+  while IFS='=' read -r _k _v; do
+    _v=${_v%%#*}; _v=${_v//[\"\' ]/}
+    case "$_k" in
+      ARBEITSZEIT_SKIP)                          [[ "$_v" =~ ^[01]$ ]] ;;
+      WORK_START|WORK_END|ABEND_START|NACHT_START) [[ "$_v" =~ ^([01]?[0-9]|2[0-3])$ ]] ;;
+      PBS_RATE_TAG|PBS_RATE_ABEND|PBS_RATE_NACHT) [[ "$_v" =~ ^([0-9]+(\.[0-9]+)?[KMGT]i?B)?$ ]] ;;
+      *) false ;;
+    esac && printf -v "$_k" '%s' "$_v"
+  done < "$LOKAL_CONF"
+  unset _k _v
+fi
+
+# Sprache: Deutsch, wenn die erste Sprache der Umgebung de ist, sonst Englisch.
+# Das Praefix "OK:"/"FEHLER:" bleibt in beiden Sprachen gleich.
+SPRACHE_DE=0
+for _v in "${LANGUAGE:-}" "${LC_ALL:-}" "${LC_MESSAGES:-}" "${LANG:-}"; do
+  [[ -n "$_v" ]] || continue
+  [[ "${_v,,}" == de* ]] && SPRACHE_DE=1
+  break
+done
+declare -A EN=(
+  ["Nacht"]="night" ["Abend"]="evening" ["Tag"]="day" ["unbegrenzt"]="unlimited"
+  ["FEHLER: %s nicht schreibbar (sudo touch %s && sudo chown %s %s)"]="FEHLER: %s is not writable (sudo touch %s && sudo chown %s %s)"
+  ["FEHLER: %s nicht schreibbar"]="FEHLER: %s is not writable"
+  ["OK: naechster Backup-Lauf heute laeuft UNGEDROSSELT."]="OK: today's next backup run is NOT throttled."
+  ["Backup heute: volle Fahrt"]="Backup today: full speed"
+  ["Der naechste Lauf sichert ohne Drossel. Gilt nur fuer heute."]="The next run backs up without a bandwidth limit. Applies to today only."
+  ["OK: naechster Backup-Lauf heute laeuft gebremst (%s)."]="OK: today's next backup run is throttled (%s)."
+  ["Backup heute: gebremst"]="Backup today: throttled"
+  ["Der naechste Lauf ist auf %s gedrosselt. Gilt nur fuer heute."]="The next run is limited to %s. Applies to today only."
+  ["OK: zurueck auf Zeitfenster-Automatik."]="OK: back to the automatic time-of-day schedule."
+  ["Backup: Automatik"]="Backup: automatic"
+  ["Die Drossel richtet sich wieder nach der Uhrzeit."]="The bandwidth limit follows the time of day again."
+  ["Uhrzeit %s:00 -> Automatik: Fenster %s, Drossel %s"]="Time %s:00 -> automatic: window %s, limit %s"
+  ["Handschalter fuer heute AKTIV: %s  (ueberstimmt die Automatik)"]="Manual override ACTIVE for today: %s  (overrides the automatic schedule)"
+  ["Handschalter vom %s (%s) ist verfallen."]="Manual override from %s (%s) has expired."
+  ["Setzen: pbs-rate voll | pbs-rate langsam | pbs-rate auto"]="Set: pbs-rate full | pbs-rate slow | pbs-rate auto"
+  ["Aufruf: pbs-rate [voll|langsam|auto|status]"]="Usage: pbs-rate [full|slow|auto|status]"
+)
+t() {
+  local f=$1; shift
+  (( SPRACHE_DE )) || f=${EN[$f]:-$f}
+  # shellcheck disable=SC2059
+  printf -- "$f" "$@"
+}
+
+automatik() {
+  if   (( HOUR >= NACHT_START || HOUR < WORK_START )); then printf '%s|Nacht'  "$PBS_RATE_NACHT"
+  elif (( HOUR >= ABEND_START ));            then printf '%s|Abend'  "$PBS_RATE_ABEND"
+  else                                            printf '%s|Tag'    "$PBS_RATE_TAG"
+  fi
+}
+
+melde() {
+  local bus="/run/user/$(id -u)/bus"
+  [[ -S "$bus" ]] && command -v notify-send >/dev/null 2>&1 || return 0
+  DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+    notify-send -a "PBS-Backup" -i drive-harddisk "$1" "$2" 2>/dev/null || true
+}
+
+setze() {
+  if ! printf '%s %s\n' "$HEUTE" "$1" > "$OV" 2>/dev/null; then
+    t "FEHLER: %s nicht schreibbar (sudo touch %s && sudo chown %s %s)" "$OV" "$OV" "$USER" "$OV" >&2; echo >&2
+    exit 1
+  fi
+}
+
+case "${1:-status}" in
+  voll|full|schnell|fast)
+    setze voll
+    t "OK: naechster Backup-Lauf heute laeuft UNGEDROSSELT."; echo
+    melde "$(t "Backup heute: volle Fahrt")" "$(t "Der naechste Lauf sichert ohne Drossel. Gilt nur fuer heute.")"
+    ;;
+  langsam|slow|bremse|bremsen)
+    setze langsam
+    t "OK: naechster Backup-Lauf heute laeuft gebremst (%s)." "$PBS_RATE_TAG"; echo
+    melde "$(t "Backup heute: gebremst")" "$(t "Der naechste Lauf ist auf %s gedrosselt. Gilt nur fuer heute." "$PBS_RATE_TAG")"
+    ;;
+  auto|automatik|reset)
+    : > "$OV" 2>/dev/null || { t "FEHLER: %s nicht schreibbar" "$OV" >&2; echo >&2; exit 1; }
+    t "OK: zurueck auf Zeitfenster-Automatik."; echo
+    melde "$(t "Backup: Automatik")" "$(t "Die Drossel richtet sich wieder nach der Uhrzeit.")"
+    ;;
+  status)
+    IFS='|' read -r rate fenster <<<"$(automatik)"
+    t "Uhrzeit %s:00 -> Automatik: Fenster %s, Drossel %s" "$HOUR" "$(t "$fenster")" "${rate:-$(t unbegrenzt)}"; echo
+    if [[ -r "$OV" ]]; then
+      read -r d w _ < "$OV" || true
+      if [[ "${d:-}" == "$HEUTE" ]]; then
+        t "Handschalter fuer heute AKTIV: %s  (ueberstimmt die Automatik)" "$w"; echo
+      elif [[ -n "${d:-}" ]]; then
+        t "Handschalter vom %s (%s) ist verfallen." "$d" "$w"; echo
+      fi
+    fi
+    echo
+    t "Setzen: pbs-rate voll | pbs-rate langsam | pbs-rate auto"; echo
+    ;;
+  *)
+    t "Aufruf: pbs-rate [voll|langsam|auto|status]" >&2; echo >&2
+    exit 2
+    ;;
+esac

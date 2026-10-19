@@ -1,0 +1,285 @@
+#!/bin/bash
+# pbs-backup — PBS-Backup eines Endgeraets (Teil von pbs-desk).
+#   Snapper-Pre-Snapshot (wenn btrfs) -> proxmox-backup-client -> PBS
+#   Zielwahl: LAN-Ziel ungedrosselt; nur mobile Geraete (MOBIL=1) weichen
+#   unterwegs gedrosselt auf das Offsite-Ziel aus. Ein im Einstellungsfenster
+#   eingetragener eigener Server gilt allein.
+# Pre-Flight: max. 1x/Tag erfolgreich, nicht in der Arbeitszeit, nur am Netzteil.
+set -uo pipefail
+
+CONF=${PBS_BACKUP_CONF:-/etc/default/pbs-backup}   # Umlenkung nur fuer Tests
+CRED_BASE=/etc/proxmox-backup-client
+STAMP_DIR=/var/lib/pbs-backup
+STAMP="$STAMP_DIR/last-success"
+LOG=/var/log/pbs-backup.log
+TS=$(date +%Y%m%d-%H%M)
+TODAY=$(date +%F)
+HOUR=$(date +%-H)
+DOW=$(date +%u)   # 1=Mo .. 7=So
+
+# Defaults, falls die Konfiguration fehlt
+DEVICE_NAME=$(hostname -s); BACKUP_ID=$DEVICE_NAME; PBS_NS=""; MOBIL=0; NOTIFY_USER=""
+LAN_NAME=pbs-lan; LAN_HOST=""; LAN_PORT=8007
+OFFSITE_NAME=pbs-offsite; OFFSITE_HOST=""; OFFSITE_PORT=8007
+ARBEITSZEIT_SKIP=1; WORK_START=8; WORK_END=17; STALE_DAYS=3
+PBS_RATE_TAG="2MiB"; PBS_RATE_ABEND="4MiB"; PBS_RATE_NACHT=""; ABEND_START=17; NACHT_START=22
+EXCLUDES=()
+SERVER_HOST=""; SERVER_PORT=8007; SERVER_NS=""; SERVER_ID=""
+# shellcheck source=/dev/null
+[[ -r "$CONF" ]] && . "$CONF"
+
+# Lokale Einstellungen (Tray-Dialog / pbs-settings); eine zentrale Verteilung
+# der Konfiguration soll diese Datei nie anfassen.
+# Nicht gesourct, sondern nur erlaubte Schluessel mit geprueftem Wert.
+LOKAL_CONF=${PBS_BACKUP_LOKAL:-/etc/pbs-backup.local}
+if [[ -r "$LOKAL_CONF" ]]; then
+  while IFS='=' read -r _k _v; do
+    _v=${_v%%#*}; _v=${_v//[\"\' ]/}
+    case "$_k" in
+      ARBEITSZEIT_SKIP)                          [[ "$_v" =~ ^[01]$ ]] ;;
+      WORK_START|WORK_END|ABEND_START|NACHT_START) [[ "$_v" =~ ^([01]?[0-9]|2[0-3])$ ]] ;;
+      PBS_RATE_TAG|PBS_RATE_ABEND|PBS_RATE_NACHT) [[ "$_v" =~ ^([0-9]+(\.[0-9]+)?[KMGT]i?B)?$ ]] ;;
+      # Eigener Server aus dem Einstellungsfenster (Zugangsdaten: $CRED_BASE/lokal)
+      SERVER_HOST)      [[ "$_v" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] ;;
+      SERVER_PORT)      [[ "$_v" =~ ^[1-9][0-9]{0,4}$ ]] ;;
+      SERVER_NS)        [[ "$_v" =~ ^([A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*)?$ ]] ;;
+      SERVER_ID)        [[ "$_v" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] ;;
+      *) false ;;
+    esac && printf -v "$_k" '%s' "$_v"
+  done < "$LOKAL_CONF"
+  unset _k _v
+fi
+
+# --- Desktop-Meldung in der Grafik-Session des Benutzers ---
+# Zweck: sehen, WANN gesichert wird (Luefter!) und vor dem Herunterfahren
+# merken, dass ein Lauf laeuft. SKIP-Faelle melden bewusst nichts.
+NOTIFY_ID_FILE=/run/pbs-backup-notify-id
+notify_desktop() {
+  # $1=urgency  $2=Titel  $3=Text  [$4=persist|ersetzt]
+  [[ -n "$NOTIFY_USER" ]] || return 0
+  local uid; uid=$(id -u "$NOTIFY_USER" 2>/dev/null) || return 0
+  local bus="/run/user/$uid/bus"
+  [[ -S "$bus" ]] || return 0   # niemand grafisch eingeloggt -> still
+  local args=(-a "PBS-Backup" -u "$1" -i drive-harddisk) id old
+  _n() { runuser -u "$NOTIFY_USER" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" notify-send "$@" 2>/dev/null || true; }
+  case "${4:-}" in
+    persist)
+      args+=(-t 0 -p)
+      id=$(_n "${args[@]}" "$2" "$3")
+      [[ "$id" =~ ^[0-9]+$ ]] && printf %s "$id" > "$NOTIFY_ID_FILE" ;;
+    ersetzt)
+      old=$(cat "$NOTIFY_ID_FILE" 2>/dev/null || true)
+      [[ "$old" =~ ^[0-9]+$ ]] && args+=(-r "$old")
+      _n "${args[@]}" "$2" "$3" >/dev/null
+      rm -f "$NOTIFY_ID_FILE" ;;
+    *)
+      _n "${args[@]}" "$2" "$3" >/dev/null ;;
+  esac
+  return 0
+}
+
+# --- Sprache der Desktop-Meldungen: die des Benutzers, sonst die des Systems.
+# Deutsch, wenn die Sprache mit "de" beginnt, sonst Englisch. Das Log bleibt
+# deutsch, weil pbs-tray es auswertet.
+meldungs_sprache() {
+  local l="" uid
+  if [[ -n "$NOTIFY_USER" ]] && uid=$(id -u "$NOTIFY_USER" 2>/dev/null) && [[ -S "/run/user/$uid/bus" ]]; then
+    l=$(runuser -u "$NOTIFY_USER" -- env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user show-environment 2>/dev/null \
+        | sed -n 's/^LANGUAGE=//p; s/^LANG=//p' | head -n1)
+  fi
+  [[ -z "$l" && -r /etc/locale.conf ]] && l=$(sed -n 's/^LANG=//p' /etc/locale.conf | tr -d '"')
+  [[ -z "$l" && -r /etc/default/locale ]] && l=$(sed -n 's/^LANG=//p' /etc/default/locale | tr -d '"')
+  [[ "${l,,}" == de* ]] && echo de || echo en
+}
+MELDUNG_DE=0
+[[ "$(meldungs_sprache)" == de ]] && MELDUNG_DE=1
+# t "deutsches Format" args... -> printf mit deutschem oder englischem Format
+declare -A EN=(
+  ["Backup überfällig"]="Backup overdue"
+  ["Letzte erfolgreiche Sicherung von %s vor %s Tagen. Siehe %s"]="Last successful backup of %s was %s days ago. See %s"
+  ["Backup läuft — bitte nicht herunterfahren"]="Backup running — please do not shut down"
+  ["Sicherung von %s nach %s läuft (deshalb drehen die Lüfter hoch). Tempo: %s (%s). Die Meldung verschwindet, wenn der Lauf fertig ist."]="Backing up %s to %s (that is why the fans spin up). Speed: %s (%s). This message disappears when the run is finished."
+  ["PBS-Backup läuft seit %s — bitte nicht herunterfahren"]="PBS backup running since %s — please do not shut down"
+  ["Backup fertig ✓"]="Backup finished ✓"
+  ["Sicherung von %s nach %s erfolgreich (Dauer %s min)."]="Backup of %s to %s succeeded (took %s min)."
+  ["Backup FEHLGESCHLAGEN ✗"]="Backup FAILED ✗"
+  ["Sicherung von %s nach %s mit Fehler rc=%s beendet. Siehe %s"]="Backup of %s to %s ended with error rc=%s. See %s"
+  ["unbegrenzt"]="unlimited"
+  ["Handschalter: volle Fahrt"]="manual: full speed"
+  ["Handschalter: gebremst"]="manual: throttled"
+  ["Automatik: Nacht"]="automatic: night"
+  ["Automatik: Abend"]="automatic: evening"
+  ["Automatik: Tag"]="automatic: day"
+  ["LAN: frei"]="LAN: unlimited"
+)
+t() {
+  local f=$1; shift
+  (( MELDUNG_DE )) || f=${EN[$f]:-$f}
+  # shellcheck disable=SC2059
+  printf -- "$f" "$@"
+}
+
+mkdir -p "$STAMP_DIR"
+exec >> "$LOG" 2>&1
+echo "=== START $(date -Is) geraet=$DEVICE_NAME id=$BACKUP_ID ns=$PBS_NS mobil=$MOBIL ==="
+
+# --- Ueberfaellig-Warnung (vor allen SKIPs, sonst faellt ein Dauerausfall nie auf)
+if [[ -f "$STAMP" ]]; then
+  LAST_EPOCH=$(date -d "$(cat "$STAMP")" +%s 2>/dev/null || echo 0)
+  AGE_DAYS=$(( ( $(date +%s) - LAST_EPOCH ) / 86400 ))
+  if (( LAST_EPOCH > 0 && AGE_DAYS >= STALE_DAYS )); then
+    echo "WARNUNG: letztes erfolgreiches Backup vor ${AGE_DAYS} Tagen ($(cat "$STAMP"))"
+    notify_desktop critical "$(t "Backup überfällig")" "$(t "Letzte erfolgreiche Sicherung von %s vor %s Tagen. Siehe %s" "$DEVICE_NAME" "$AGE_DAYS" "$LOG")"
+  fi
+fi
+
+# Manueller Start (systemctl start ohne Timer) umgeht Pre-Flight 1 und 2.
+# TRIGGER_UNIT allein reicht nicht: systemd 259 behaelt es nach einem Timer-Lauf
+# am Unit-Objekt und reicht es auch an spaetere Handstarts weiter.
+# Timer-Lauf also nur, wenn der Timer in den letzten 5 Minuten ausgeloest hat.
+VIA_TIMER=""
+if [[ -n "${TRIGGER_UNIT:-}" ]]; then
+  LAST_TRIG=$(systemctl show --timestamp=unix -p LastTriggerUSec --value "$TRIGGER_UNIT" 2>/dev/null)
+  LAST_TRIG=${LAST_TRIG#@}
+  if [[ "$LAST_TRIG" =~ ^[0-9]+$ ]] && (( $(date +%s) - LAST_TRIG <= 300 )); then
+    VIA_TIMER=1
+  fi
+fi
+if [[ -z "$VIA_TIMER" ]]; then
+  echo "MANUELL gestartet: Tages-Sperre und Arbeitszeit-Pruefung uebersprungen"
+fi
+
+# --- Pre-Flight 1: heute schon erfolgreich?
+if [[ -n "$VIA_TIMER" && -f "$STAMP" && "$(cat "$STAMP" 2>/dev/null)" == "$TODAY" ]]; then
+  echo "SKIP: heute ($TODAY) bereits erfolgreich gesichert"
+  exit 0
+fi
+
+# --- Pre-Flight 2: Arbeitszeit? Faengt auch den Persistent=true-Nachholer
+# beim Morgen-Boot ab (ein Upload kann sonst die Leitung einer Videokonferenz belegen).
+if [[ -n "$VIA_TIMER" ]] && (( ARBEITSZEIT_SKIP && DOW <= 5 && HOUR >= WORK_START && HOUR < WORK_END )); then
+  echo "SKIP: Arbeitszeit (Mo-Fr ${WORK_START}:00-${WORK_END}:00)"
+  exit 0
+fi
+
+# --- Pre-Flight 3: Netzteil (ohne Akku-Sysfs = Desktop = immer OK)
+ac_ok() {
+  local found=0 f
+  for f in /sys/class/power_supply/A*/online; do
+    [[ -e "$f" ]] || continue
+    found=1
+    [[ "$(cat "$f")" == "1" ]] && return 0
+  done
+  (( found == 0 ))
+}
+if ! ac_ok; then
+  echo "SKIP: Gerät läuft auf Akku"
+  exit 0
+fi
+
+# --- Pre-Flight 4: Ziel waehlen
+erreichbar() { curl -sk --max-time 10 -o /dev/null "https://$1:$2/"; }
+ZIEL=""
+if [[ -n "$SERVER_HOST" && -r "$CRED_BASE/lokal/token" ]]; then
+  # Ein selbst eingetragener Server gilt allein, ohne Ausweichziel.
+  if erreichbar "$SERVER_HOST" "$SERVER_PORT"; then
+    ZIEL=lokal; ZIEL_NAME=$SERVER_HOST; PBS_NS=$SERVER_NS; BACKUP_ID=${SERVER_ID:-$BACKUP_ID}
+  else
+    echo "SKIP: $SERVER_HOST:$SERVER_PORT nicht erreichbar"
+    exit 0
+  fi
+elif [[ -n "$LAN_HOST" && -r "$CRED_BASE/lan/token" ]] && erreichbar "$LAN_HOST" "$LAN_PORT"; then
+  ZIEL=lan; ZIEL_NAME=$LAN_NAME
+elif (( MOBIL )) && [[ -n "$OFFSITE_HOST" && -r "$CRED_BASE/offsite/token" ]]; then
+  # WG-Tunnel ggf. erst aufwecken: mehrere Versuche
+  for i in 1 2 3; do
+    if erreichbar "$OFFSITE_HOST" "$OFFSITE_PORT"; then ZIEL=offsite; ZIEL_NAME=$OFFSITE_NAME; break; fi
+    sleep 10
+  done
+fi
+if [[ -z "$ZIEL" ]]; then
+  if (( MOBIL )); then echo "SKIP: weder $LAN_NAME noch $OFFSITE_NAME erreichbar"
+  else echo "SKIP: $LAN_NAME ($LAN_HOST:$LAN_PORT) nicht erreichbar"; fi
+  exit 0
+fi
+
+PBS_FINGERPRINT=$(cat "$CRED_BASE/$ZIEL/server-fingerprint")
+PBS_PASSWORD=$(cat "$CRED_BASE/$ZIEL/token")
+PBS_REPOSITORY=$(cat "$CRED_BASE/$ZIEL/repository")
+export PBS_FINGERPRINT PBS_PASSWORD PBS_REPOSITORY
+
+# --- Drossel: nur offsite. Handschalter (pbs-rate) gilt nur heute.
+PBS_RATE=""; RATE_QUELLE="LAN: frei"
+if [[ "$ZIEL" == offsite ]]; then
+  ov_datum=""; ov_wahl=""
+  [[ -r "$STAMP_DIR/rate.override" ]] && read -r ov_datum ov_wahl _ < "$STAMP_DIR/rate.override" || true
+  RATE_QUELLE=""
+  if [[ "$ov_datum" == "$TODAY" ]]; then
+    case "$ov_wahl" in
+      voll)    PBS_RATE="";              RATE_QUELLE="Handschalter: volle Fahrt" ;;
+      langsam) PBS_RATE="$PBS_RATE_TAG"; RATE_QUELLE="Handschalter: gebremst" ;;
+    esac
+  fi
+  if [[ -z "$RATE_QUELLE" ]]; then
+    if   (( HOUR >= NACHT_START || HOUR < WORK_START )); then PBS_RATE="$PBS_RATE_NACHT"; RATE_QUELLE="Automatik: Nacht"
+    elif (( HOUR >= ABEND_START ));                     then PBS_RATE="$PBS_RATE_ABEND"; RATE_QUELLE="Automatik: Abend"
+    else                                                     PBS_RATE="$PBS_RATE_TAG";   RATE_QUELLE="Automatik: Tag"
+    fi
+  fi
+fi
+RATEARGS=()
+[[ -n "$PBS_RATE" ]] && RATEARGS=(--rate "$PBS_RATE")
+
+# --- Snapper-Pre-Snapshots (nur wenn Config vorhanden)
+ROOT_ID=""; HOME_ID=""
+cleanup() {
+  [[ -n "$ROOT_ID" ]] && snapper -c root delete "$ROOT_ID" 2>/dev/null && echo "root-snap $ROOT_ID gelöscht"
+  [[ -n "$HOME_ID" ]] && snapper -c home delete "$HOME_ID" 2>/dev/null && echo "home-snap $HOME_ID gelöscht"
+  return 0
+}
+trap cleanup EXIT
+hat_cfg() { snapper --csvout list-configs --columns config 2>/dev/null | grep -qx "$1"; }
+ROOT_SRC=/; HOME_SRC=/home
+if hat_cfg root; then
+  ROOT_ID=$(snapper -c root create --type single --print-number --cleanup-algorithm number --description "pbs-backup-$TS")
+  ROOT_SRC=/.snapshots/$ROOT_ID/snapshot
+fi
+if hat_cfg home; then
+  HOME_ID=$(snapper -c home create --type single --print-number --cleanup-algorithm number --description "pbs-backup-$TS")
+  HOME_SRC=/home/.snapshots/$HOME_ID/snapshot
+fi
+echo "Quellen: root=$ROOT_SRC home=$HOME_SRC"
+
+ARCHIVE=(root.pxar:"$ROOT_SRC")
+# /home nur als eigenes Archiv, wenn es ein eigenes Dateisystem ist oder
+# einen eigenen Snapshot hat — sonst steckt es schon in root.pxar.
+if [[ -n "$HOME_ID" ]] || [[ "$(findmnt -no TARGET --target /home)" == /home ]]; then
+  ARCHIVE+=(home.pxar:"$HOME_SRC")
+fi
+
+NSARGS=()
+[[ -n "$PBS_NS" ]] && NSARGS=(--ns "$PBS_NS")
+EXARGS=()
+for p in "${EXCLUDES[@]}"; do EXARGS+=(--exclude "$p"); done
+
+echo "--- Backup Ziel=$ZIEL_NAME ($ZIEL) ${#EXCLUDES[@]} Ausschluesse, Drossel=${PBS_RATE:-unbegrenzt} [$RATE_QUELLE] ---"
+RUN_START=$(date +%s)
+notify_desktop normal "$(t "Backup läuft — bitte nicht herunterfahren")" \
+  "$(t "Sicherung von %s nach %s läuft (deshalb drehen die Lüfter hoch). Tempo: %s (%s). Die Meldung verschwindet, wenn der Lauf fertig ist." \
+      "$DEVICE_NAME" "$ZIEL_NAME" "${PBS_RATE:-$(t unbegrenzt)}" "$(t "$RATE_QUELLE")")" persist
+if systemd-inhibit --what=shutdown:sleep:idle --mode=block --who="pbs-backup" \
+     --why="$(t "PBS-Backup läuft seit %s — bitte nicht herunterfahren" "$(date +%H:%M)")" \
+   proxmox-backup-client backup "${ARCHIVE[@]}" \
+     "${NSARGS[@]}" --backup-id "$BACKUP_ID" \
+     "${RATEARGS[@]}" "${EXARGS[@]}"; then
+  echo "$TODAY" > "$STAMP"
+  echo "$TODAY $ZIEL_NAME" > "$STAMP_DIR/last-target"
+  MIN=$(( ( $(date +%s) - RUN_START ) / 60 ))
+  echo "=== DONE $(date -Is) Ziel=$ZIEL_NAME Dauer=${MIN}min — Stamp gesetzt ==="
+  notify_desktop normal "$(t "Backup fertig ✓")" "$(t "Sicherung von %s nach %s erfolgreich (Dauer %s min)." "$DEVICE_NAME" "$ZIEL_NAME" "$MIN")" ersetzt
+else
+  rc=$?
+  echo "=== FEHLER rc=$rc $(date -Is) Ziel=$ZIEL_NAME ==="
+  notify_desktop critical "$(t "Backup FEHLGESCHLAGEN ✗")" "$(t "Sicherung von %s nach %s mit Fehler rc=%s beendet. Siehe %s" "$DEVICE_NAME" "$ZIEL_NAME" "$rc" "$LOG")" ersetzt
+  exit $rc
+fi

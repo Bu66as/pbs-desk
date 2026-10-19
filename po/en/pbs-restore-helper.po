@@ -1,0 +1,43 @@
+# English translation of pbs-restore-helper (PBS-Desk).
+# msgid = German source text as in the code.
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Aufruf (als root):\n  pbs-restore-helper [--lang=de|en] snapshots\n      Gibt die Sicherungen des ersten erreichbaren Ziels als JSON aus.\n  pbs-restore-helper [--lang=de|en] mount <ziel> <namespace|-> <snapshot> <archiv>\n      Hängt ein Archiv schreibgeschützt unter /run/user/<uid>/pbs-desk/ ein\n      und gibt den Pfad aus."
+msgstr "Usage (as root):\n  pbs-restore-helper [--lang=de|en] snapshots\n      Prints the backups of the first reachable target as JSON.\n  pbs-restore-helper [--lang=de|en] mount <target> <namespace|-> <snapshot> <archive>\n      Mounts an archive read-only under /run/user/<uid>/pbs-desk/\n      and prints the path."
+
+msgid "pbs-restore-helper: braucht root (pkexec)"
+msgstr "pbs-restore-helper: must be run as root (pkexec)"
+
+msgid "Repository-Angabe von '{ziel}' ist nicht lesbar"
+msgstr "Cannot parse the repository of '{ziel}'"
+
+msgid "Keine Zugangsdaten unter {pfad} gefunden"
+msgstr "No credentials found in {pfad}"
+
+msgid "Der Backup-Server ist nicht erreichbar"
+msgstr "The backup server is not reachable"
+
+msgid "Der Backup-Server antwortet nicht"
+msgstr "The backup server is not responding"
+
+msgid "Aufrufender Benutzer nicht erkennbar (Start über pkexec nötig)"
+msgstr "Cannot determine the calling user (must be started via pkexec)"
+
+msgid "Unbekanntes Ziel"
+msgstr "Unknown target"
+
+msgid "Ungültige Angabe"
+msgstr "Invalid argument"
+
+msgid "{pfad} fehlt (Benutzer nicht angemeldet?)"
+msgstr "{pfad} is missing (user not logged in?)"
+
+msgid "{pfad} lässt sich nicht anlegen"
+msgstr "Cannot create {pfad}"
+
+msgid "Zeitüberschreitung beim Einhängen"
+msgstr "Timed out while mounting"
+
+msgid "Einhängen fehlgeschlagen"
+msgstr "Mounting failed"

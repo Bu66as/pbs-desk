@@ -1,0 +1,172 @@
+# English translation of pbs-restore (PBS-Desk).
+# msgid = German source text as in the code.
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "System (/)"
+msgstr "System (/)"
+
+msgid "Persönliche Dateien (/home)"
+msgstr "Personal files (/home)"
+
+msgid "gestern"
+msgstr "yesterday"
+
+msgid "gerade eben"
+msgstr "just now"
+
+msgid "vor {tage} Tagen"
+msgstr "{tage} days ago"
+
+msgid "vor {stunden} Std."
+msgstr "{stunden} h ago"
+
+msgid "{zeit:%d.%m.%Y %H:%M} – {bereich}"
+msgstr "{zeit:%Y-%m-%d %H:%M} – {bereich}"
+
+msgid "{zeit:%a %d.%m.%Y %H:%M}"
+msgstr "{zeit:%a %Y-%m-%d %H:%M}"
+
+msgid "PBS-Desk – Wiederherstellen"
+msgstr "PBS-Desk – Restore"
+
+msgid "Wiederherstellen"
+msgstr "Restore"
+
+msgid "Verlauf"
+msgstr "History"
+
+msgid "Sicherung"
+msgstr "Backup"
+
+msgid "Alter"
+msgstr "Age"
+
+msgid "Größe"
+msgstr "Size"
+
+msgid "Geprüft"
+msgstr "Verified"
+
+msgid "ja"
+msgstr "yes"
+
+msgid "FEHLERHAFT"
+msgstr "FAILED"
+
+msgid "noch nicht"
+msgstr "not yet"
+
+msgid "verschlüsselt"
+msgstr "encrypted"
+
+msgid "Im Dateimanager öffnen"
+msgstr "Open in File Manager"
+
+msgid "Aktualisieren"
+msgstr "Refresh"
+
+msgid "Geöffnete Sicherungen (schreibgeschützt, zurückholen per Kopieren und Einfügen):"
+msgstr "Open backups (read-only, restore files by copy and paste):"
+
+msgid "Anzeigen"
+msgstr "Show"
+
+msgid "Schließen"
+msgstr "Close"
+
+msgid "{programm} lässt sich nicht starten"
+msgstr "Cannot start {programm}"
+
+msgid "Anmeldung abgebrochen oder nicht erlaubt."
+msgstr "Authentication cancelled or not permitted."
+
+msgid "Fehler {rc}"
+msgstr "Error {rc}"
+
+msgid "Sicherungen werden geladen …"
+msgstr "Loading backups …"
+
+msgid "Sicherungen konnten nicht geladen werden: {fehler}"
+msgstr "Could not load backups: {fehler}"
+
+msgid "Die Antwort des Helfers ist nicht lesbar."
+msgstr "The helper returned an unreadable response."
+
+msgid "Auf {ziel} liegt noch keine Sicherung."
+msgstr "There are no backups on {ziel} yet."
+
+msgid "{n} Sicherung auf {ziel}. Sicherung aufklappen, Bereich wählen und öffnen."
+msgstr "{n} backup on {ziel}. Expand a backup, select an area and open it."
+
+msgid "{n} Sicherungen auf {ziel}. Sicherung aufklappen, Bereich wählen und öffnen."
+msgstr "{n} backups on {ziel}. Expand a backup, select an area and open it."
+
+msgid "Sicherung wird geöffnet …"
+msgstr "Opening backup …"
+
+msgid "Öffnen fehlgeschlagen: {fehler}"
+msgstr "Could not open backup: {fehler}"
+
+msgid "Sicherung geöffnet. Dateien lassen sich im Dateimanager herauskopieren."
+msgstr "Backup opened. You can copy files out of it in the file manager."
+
+msgid "Schließen nicht möglich"
+msgstr "Cannot Close Backup"
+
+msgid "Die Sicherung wird noch benutzt. Bitte erst das Fenster des Dateimanagers schließen.\n\n{fehler}"
+msgstr "The backup is still in use. Please close the file manager window first.\n\n{fehler}"
+
+msgid "Geöffnete Sicherungen"
+msgstr "Open Backups"
+
+msgid "Es ist noch {n} Sicherung geöffnet. Jetzt schließen?"
+msgstr "{n} backup is still open. Close it now?"
+
+msgid "Es sind noch {n} Sicherungen geöffnet. Jetzt schließen?"
+msgstr "{n} backups are still open. Close them now?"
+
+msgid "Start"
+msgstr "Start"
+
+msgid "Ergebnis"
+msgstr "Result"
+
+msgid "Ziel"
+msgstr "Target"
+
+msgid "Dauer"
+msgstr "Duration"
+
+msgid "Hinweis"
+msgstr "Note"
+
+msgid "Übersprungene Läufe anzeigen"
+msgstr "Show skipped runs"
+
+msgid "erfolgreich"
+msgstr "succeeded"
+
+msgid "fehlgeschlagen"
+msgstr "failed"
+
+msgid "abgebrochen"
+msgstr "aborted"
+
+msgid "läuft"
+msgstr "running"
+
+msgid "übersprungen"
+msgstr "skipped"
+
+msgid "von Hand gestartet"
+msgstr "started manually"
+
+msgid "Fehlercode {rc}"
+msgstr "Error code {rc}"
+
+msgid "Noch kein Verlauf vorhanden ({datei})."
+msgstr "No history yet ({datei})."
+
+msgid "{gezeigt} von {gesamt} Läufen aus {datei}"
+msgstr "{gezeigt} of {gesamt} runs from {datei}"

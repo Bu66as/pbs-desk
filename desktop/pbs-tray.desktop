@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=PBS-Desk (Tray)
+GenericName=Backup status
+GenericName[de]=Backup-Anzeige
+Comment=Shows in the system tray whether a backup is running
+Comment[de]=Zeigt im Systemabschnitt, ob das Backup läuft
+Exec=/usr/local/bin/pbs-tray
+Icon=pbs-desk
+Terminal=false
+Categories=System;Utility;
+X-GNOME-Autostart-enabled=true

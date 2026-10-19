@@ -1,0 +1,350 @@
+#!/usr/bin/python3
+"""Root-Helfer fuer das Wiederherstellen: Sicherungen auflisten und einhaengen.
+
+Die Zugangsdaten des Backup-Servers liegen nur fuer root lesbar unter
+/etc/proxmox-backup-client/<lan|offsite|lokal>/. Dieser Helfer ist die einzige
+Stelle, die sie anfasst; die Oberflaeche (pbs-restore) ruft ihn per pkexec.
+
+Ziele wie in pbs-backup: Ist im Einstellungsfenster ein eigener Server
+eingetragen (SERVER_HOST in /etc/pbs-backup.local und lokal/token vorhanden),
+gilt nur dieser ("lokal", Namespace SERVER_NS). Sonst lan, dann offsite.
+
+Aufruf (als root):
+  pbs-restore-helper [--lang=de|en] snapshots
+      Gibt die Sicherungen des ersten erreichbaren Ziels als JSON aus.
+  pbs-restore-helper [--lang=de|en] mount <ziel> <namespace|-> <snapshot> <archiv>
+      Haengt ein Archiv schreibgeschuetzt unter
+      /run/user/<uid>/pbs-desk/ ein und gibt den Pfad aus.
+
+--lang muss das erste Argument sein und bestimmt die Sprache der Meldungen.
+pkexec loescht die Umgebung, deshalb gibt die Oberflaeche die Sprache so mit.
+Ohne --lang: Sprache der Umgebung, ohne Sprachvariablen Deutsch.
+Maschinell ausgewertet werden nur das JSON und das Praefix "FEHLER:".
+
+Eingehaengt wird mit der Kennung des aufrufenden Benutzers, nicht als root:
+FUSE laesst sonst nur root hinein, und so gelten im eingehaengten Baum
+dieselben Dateirechte wie im laufenden System. Das Token geht ueber einen
+geerbten Dateideskriptor an proxmox-backup-client, es steht weder in der
+Kommandozeile noch in der Umgebung. Aushaengen kann der Benutzer selbst
+(fusermount3 -u), dafuer braucht es den Helfer nicht.
+"""
+import gettext
+import json
+import os
+import pwd
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+LOCALEDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "share", "locale")
+
+
+def _sprache_deutsch():
+    """Deutsch, wenn die erste Sprache der Umgebung de ist; sonst Englisch."""
+    for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        w = os.environ.get(v, "")
+        if w:
+            return w.split(":")[0].lower().startswith("de")
+    return False
+
+
+_ = (gettext.NullTranslations() if _sprache_deutsch() else
+     gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+
+def sprache_setzen(argv):
+    """Optionales erstes Argument --lang=de|en auswerten und aus argv entfernen.
+
+    Das Argument hat Vorrang vor der Umgebung. Fehlt es und ist keine
+    Sprachvariable gesetzt (pkexec loescht die Umgebung), gilt Deutsch.
+    """
+    global _
+    if len(argv) > 1 and argv[1].startswith("--lang="):
+        deutsch = argv.pop(1)[len("--lang="):].lower().startswith("de")
+    elif any(os.environ.get(v) for v in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG")):
+        deutsch = _sprache_deutsch()
+    else:
+        deutsch = True
+    _ = (gettext.NullTranslations() if deutsch else
+         gettext.translation("pbs-desk", LOCALEDIR, languages=["en"], fallback=True)).gettext
+
+CONF = "/etc/default/pbs-backup"
+LOKAL = "/etc/pbs-backup.local"
+CRED_BASE = "/etc/proxmox-backup-client"
+ZIELE = ("lan", "offsite")
+ZIEL_LOKAL = "lokal"   # eigener Server aus dem Einstellungsfenster (pbs-settings)
+CLIENT = "proxmox-backup-client"
+# /usr/local zuerst: der Client liegt dort, wenn er nicht aus einem Paket kommt
+PFAD = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+RE_NS = re.compile(r"^[A-Za-z0-9_-]+(/[A-Za-z0-9_-]+){0,7}$")
+RE_SNAPSHOT = re.compile(r"^(host|ct|vm)/[A-Za-z0-9_][A-Za-z0-9_.-]*/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+RE_ARCHIV = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*\.(pxar|mpxar)(\.didx)?$")
+RE_REPO = re.compile(r"^(?:.+@)?(\[[0-9A-Fa-f:]+\]|[^:@\[\]]+)(?::(\d+))?:[^:@]+$")
+# Werte aus /etc/pbs-backup.local nur mit denselben Pruefungen wie pbs-backup/pbs-settings
+LOKAL_PRUEFUNG = {
+    "SERVER_HOST": re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$"),
+    "SERVER_PORT": re.compile(r"^[1-9]\d{0,4}$"),
+    "SERVER_NS": re.compile(r"^([A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*)?$"),
+    "SERVER_ID": re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$"),
+}
+
+
+class Fehler(Exception):
+    pass
+
+
+def conf_werte(pfad=None):
+    werte = {}
+    try:
+        with open(pfad or CONF) as f:
+            for zeile in f:
+                zeile = zeile.strip()
+                if not zeile or zeile.startswith("#") or "=" not in zeile:
+                    continue
+                k, v = zeile.split("=", 1)
+                werte[k.strip()] = v.split("#")[0].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return werte
+
+
+def lokal_werte():
+    """Eigener Server aus /etc/pbs-backup.local, nur gepruefte Werte."""
+    return {k: v for k, v in conf_werte(LOKAL).items()
+            if k in LOKAL_PRUEFUNG and LOKAL_PRUEFUNG[k].match(v)}
+
+
+def lokal_aktiv():
+    """Wie pbs-backup: SERVER_HOST gesetzt und lokal/token vorhanden -> nur dieses Ziel."""
+    return bool(lokal_werte().get("SERVER_HOST")) and \
+        os.path.isfile(os.path.join(CRED_BASE, ZIEL_LOKAL, "token"))
+
+
+def lies(ziel, datei):
+    with open(os.path.join(CRED_BASE, ziel, datei)) as f:
+        return f.read().strip()
+
+
+def server(ziel):
+    """(host, port) aus der Repository-Angabe des Ziels."""
+    m = RE_REPO.match(lies(ziel, "repository"))
+    if not m:
+        raise Fehler(_("Repository-Angabe von '{ziel}' ist nicht lesbar").format(ziel=ziel))
+    return m.group(1).strip("[]"), int(m.group(2) or 8007)
+
+
+def erreichbar(ziel):
+    try:
+        with socket.create_connection(server(ziel), timeout=5):
+            return True
+    except (OSError, Fehler):
+        return False
+
+
+def ziel_waehlen():
+    if lokal_aktiv():
+        # Ein selbst eingetragener Server gilt allein, ohne Ausweichziel.
+        if erreichbar(ZIEL_LOKAL):
+            return ZIEL_LOKAL
+        raise Fehler(_("Der Backup-Server ist nicht erreichbar"))
+    vorhanden = [z for z in ZIELE if os.path.isfile(os.path.join(CRED_BASE, z, "token"))]
+    if not vorhanden:
+        raise Fehler(_("Keine Zugangsdaten unter {pfad} gefunden").format(pfad=CRED_BASE))
+    for z in vorhanden:
+        if erreichbar(z):
+            return z
+    raise Fehler(_("Der Backup-Server ist nicht erreichbar"))
+
+
+def client_umgebung(ziel, basis=None):
+    env = dict(basis or {"PATH": PFAD, "LANG": "C.UTF-8"})
+    env["PBS_REPOSITORY"] = lies(ziel, "repository")
+    env["PBS_FINGERPRINT"] = lies(ziel, "server-fingerprint")
+    return env
+
+
+def token_fd(ziel):
+    """Lese-Ende einer Pipe, in der das Token liegt."""
+    r, w = os.pipe()
+    os.write(w, lies(ziel, "token").encode())
+    os.close(w)
+    return r
+
+
+def client(ziel, *args, timeout=60):
+    fd = token_fd(ziel)
+    env = client_umgebung(ziel)
+    env["PBS_PASSWORD_FD"] = str(fd)
+    try:
+        p = subprocess.run([CLIENT, *args], env=env, pass_fds=[fd], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise Fehler(_("Der Backup-Server antwortet nicht"))
+    finally:
+        os.close(fd)
+    if p.returncode != 0:
+        raise Fehler(p.stderr.strip().splitlines()[-1] if p.stderr.strip() else f"{CLIENT} rc={p.returncode}")
+    return p.stdout
+
+
+def namespaces(ziel):
+    """Namespace aus der Konfiguration, sonst alle, die das Token sehen darf."""
+    if ziel == ZIEL_LOKAL:
+        return [lokal_werte().get("SERVER_NS", "")]   # wie pbs-backup: PBS_NS=$SERVER_NS
+    ns = conf_werte().get("PBS_NS")
+    if ns is not None:
+        return [ns]
+    gefunden = [z.strip() for z in client(ziel, "namespace", "list").splitlines() if z.strip()]
+    return [""] + [n for n in gefunden if RE_NS.match(n)]
+
+
+def snapshots():
+    ziel = ziel_waehlen()
+    werte = conf_werte()
+    liste = []
+    fehler = None
+    for ns in namespaces(ziel):
+        args = ["snapshot", "list", "--output-format", "json"]
+        if ns:
+            args += ["--ns", ns]
+        try:
+            daten = json.loads(client(ziel, *args))
+        except (Fehler, ValueError) as e:
+            fehler = str(e)   # z.B. keine Rechte auf dem Wurzel-Namespace
+            continue
+        for s in daten:
+            zeit = datetime.fromtimestamp(s["backup-time"], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            archive = [{"name": f["filename"], "groesse": f.get("size", 0),
+                        "verschluesselt": f.get("crypt-mode", "none") == "encrypt"}
+                       for f in s.get("files", []) if RE_ARCHIV.match(f["filename"])]
+            liste.append({
+                "ns": ns,
+                "snapshot": f"{s['backup-type']}/{s['backup-id']}/{zeit}",
+                "zeit": s["backup-time"],
+                "groesse": s.get("size", 0),
+                "geprueft": (s.get("verification") or {}).get("state"),
+                "geschuetzt": bool(s.get("protected")),
+                "archive": archive,
+            })
+    if not liste and fehler:
+        raise Fehler(fehler)
+    liste.sort(key=lambda s: s["zeit"], reverse=True)
+    host, _port = server(ziel)
+    if ziel == ZIEL_LOKAL:
+        name = lokal_werte().get("SERVER_HOST") or host
+    else:
+        name = werte.get("LAN_NAME" if ziel == "lan" else "OFFSITE_NAME") or host
+    json.dump({"ziel": ziel, "ziel_name": name, "snapshots": liste}, sys.stdout)
+    print()
+
+
+def aufrufer():
+    """Der Benutzer, der pkexec/sudo gestartet hat."""
+    for var in ("PKEXEC_UID", "SUDO_UID"):
+        wert = os.environ.get(var, "")
+        if wert.isdigit() and int(wert) > 0:
+            return pwd.getpwuid(int(wert))
+    raise Fehler(_("Aufrufender Benutzer nicht erkennbar (Start über pkexec nötig)"))
+
+
+def eingehaengt(pfad):
+    with open("/proc/self/mountinfo") as f:
+        return any(z.split()[4] == pfad for z in f)
+
+
+def mount(ziel, ns, snapshot, archiv):
+    if ziel == ZIEL_LOKAL:
+        if not lokal_aktiv():
+            raise Fehler(_("Unbekanntes Ziel"))
+    elif ziel not in ZIELE or lokal_aktiv():   # mit eigenem Server gilt nur dieser
+        raise Fehler(_("Unbekanntes Ziel"))
+    ns = "" if ns == "-" else ns
+    if ziel == ZIEL_LOKAL:
+        ns_ok = ns == lokal_werte().get("SERVER_NS", "")   # nur der eingetragene Namespace
+    else:
+        ns_ok = not ns or RE_NS.match(ns)
+    if not ns_ok or not RE_SNAPSHOT.match(snapshot) or not RE_ARCHIV.match(archiv):
+        raise Fehler(_("Ungültige Angabe"))
+    if not erreichbar(ziel):
+        raise Fehler(_("Der Backup-Server ist nicht erreichbar"))
+    pw = aufrufer()
+    laufzeit = f"/run/user/{pw.pw_uid}"
+    if not os.path.isdir(laufzeit):
+        raise Fehler(_("{pfad} fehlt (Benutzer nicht angemeldet?)").format(pfad=laufzeit))
+    _typ, kennung, zeit = snapshot.split("/")
+    stamm = re.sub(r"\.(pxar|mpxar)(\.didx)?$", "", archiv)
+    pfad = f"{laufzeit}/pbs-desk/{kennung}_{zeit.replace(':', '')}_{stamm}"
+    if eingehaengt(pfad):
+        print(pfad)
+        return
+
+    als_benutzer = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=os.getgrouplist(pw.pw_name, pw.pw_gid),
+                        stdin=subprocess.DEVNULL, cwd="/")
+    basis = {"PATH": PFAD, "LANG": "C.UTF-8", "HOME": pw.pw_dir,
+             "USER": pw.pw_name, "LOGNAME": pw.pw_name, "XDG_RUNTIME_DIR": laufzeit}
+    # Verzeichnis mit den Rechten des Benutzers anlegen, root schreibt nicht in dessen Baum
+    if subprocess.run(["mkdir", "-p", "-m", "700", pfad], env=basis, **als_benutzer).returncode != 0:
+        raise Fehler(_("{pfad} lässt sich nicht anlegen").format(pfad=pfad))
+
+    fd = token_fd(ziel)
+    env = client_umgebung(ziel, basis)
+    env["PBS_PASSWORD_FD"] = str(fd)
+    args = [CLIENT, "mount", snapshot, archiv, pfad]
+    if ns:
+        args += ["--ns", ns]
+    # Der Client legt sich nach dem Einhaengen in den Hintergrund und behaelt
+    # seine Ausgabekanaele: deshalb Datei statt Pipe, sonst wartet man ewig.
+    with tempfile.TemporaryFile() as meldungen:
+        try:
+            p = subprocess.run(args, env=env, pass_fds=[fd], stdout=subprocess.DEVNULL,
+                               stderr=meldungen, timeout=120, **als_benutzer)
+        except subprocess.TimeoutExpired:
+            raise Fehler(_("Zeitüberschreitung beim Einhängen"))
+        finally:
+            os.close(fd)
+        meldungen.seek(0)
+        text = meldungen.read().decode(errors="replace").strip()
+    if p.returncode != 0 or not eingehaengt(pfad):
+        zeilen = [z for z in text.splitlines() if z and not z.startswith("FUSE library")]
+        raise Fehler(zeilen[-1] if zeilen else _("Einhängen fehlgeschlagen"))
+    print(pfad)
+
+
+def nutzung():
+    return _("Aufruf (als root):\n"
+             "  pbs-restore-helper [--lang=de|en] snapshots\n"
+             "      Gibt die Sicherungen des ersten erreichbaren Ziels als JSON aus.\n"
+             "  pbs-restore-helper [--lang=de|en] mount <ziel> <namespace|-> <snapshot> <archiv>\n"
+             "      Hängt ein Archiv schreibgeschützt unter /run/user/<uid>/pbs-desk/ ein\n"
+             "      und gibt den Pfad aus.")
+
+
+def main(argv):
+    argv = list(argv)
+    sprache_setzen(argv)
+    if os.geteuid() != 0:
+        print(_("pbs-restore-helper: braucht root (pkexec)"), file=sys.stderr)
+        return 1
+    try:
+        if argv[1:] == ["snapshots"]:
+            snapshots()
+        elif len(argv) == 6 and argv[1] == "mount":
+            mount(*argv[2:])
+        else:
+            print(nutzung(), file=sys.stderr)
+            return 2
+    except Fehler as e:
+        print(f"FEHLER: {e}", file=sys.stderr)   # Praefix wertet pbs-restore aus, nie uebersetzen
+        return 1
+    except OSError as e:
+        print(f"FEHLER: {e.strerror}: {e.filename}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
