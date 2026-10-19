@@ -22,6 +22,10 @@ little testing. There are no RPM/DEB packages yet; install with `install.sh`.
 Requirements: systemd, Python 3 with PySide6, `notify-send`, `pkexec`, `curl`
 and `proxmox-backup-client`. Optional: `snapper` for btrfs snapshots.
 
+Update the system first (`sudo dnf upgrade` or `apt upgrade`). On a freshly
+installed Fedora that was never updated, `--deps` can otherwise fail on file
+conflicts between distribution packages.
+
 ```bash
 git clone https://github.com/Bu66as/pbs-desk.git
 cd pbs-desk

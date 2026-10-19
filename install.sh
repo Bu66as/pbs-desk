@@ -77,10 +77,10 @@ paketmanager() {
 }
 PM=$(paketmanager || true)
 case "$PM" in
-  dnf)     PAKETE=(python3-pyside6 libnotify polkit curl binutils) ;;
-  zypper)  PAKETE=(python3-pyside6 libnotify-tools polkit curl binutils) ;;
-  apt-get) PAKETE=(python3-pyside6.qtwidgets libnotify-bin pkexec curl binutils) ;;
-  pacman)  PAKETE=(pyside6 libnotify polkit curl binutils) ;;
+  dnf)     PAKETE=(python3-pyside6 qt6-qttranslations libnotify polkit curl binutils) ;;
+  zypper)  PAKETE=(python3-pyside6 qt6-translations libnotify-tools polkit curl binutils) ;;
+  apt-get) PAKETE=(python3-pyside6.qtwidgets qt6-translations-l10n libnotify-bin pkexec curl binutils) ;;
+  pacman)  PAKETE=(pyside6 qt6-translations libnotify polkit curl binutils) ;;
   *)       PAKETE=() ;;
 esac
 if (( MIT_DEPS )); then

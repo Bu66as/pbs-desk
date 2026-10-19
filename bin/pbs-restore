@@ -18,7 +18,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QProcess, Qt
+from PySide6.QtCore import QLibraryInfo, QLocale, QProcess, QTranslator, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
@@ -429,6 +429,11 @@ class Fenster(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # Qt-eigene Knoepfe (Save, Cancel, Yes, No) in der Sprache des Systems
+    qt_texte = QTranslator(app)
+    if qt_texte.load(QLocale(), "qtbase", "_",
+                     QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(qt_texte)
     app.setApplicationName("pbs-restore")
     app.setDesktopFileName("pbs-restore")
     fenster = Fenster()

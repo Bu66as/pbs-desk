@@ -22,7 +22,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QLibraryInfo, QLocale, QTimer, QTranslator, Qt
 from PySide6.QtGui import QAction, QActionGroup, QIcon
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox,
                                QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -799,6 +799,11 @@ class Tray(QSystemTrayIcon):
 
 def main():
     app = QApplication(sys.argv)
+    # Qt-eigene Knoepfe (Save, Cancel, Yes, No) in der Sprache des Systems
+    qt_texte = QTranslator(app)
+    if qt_texte.load(QLocale(), "qtbase", "_",
+                     QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)):
+        app.installTranslator(qt_texte)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(PROGRAMM)
     # Unter Wayland holt Plasma das Fenstersymbol aus dem Starter-Eintrag
