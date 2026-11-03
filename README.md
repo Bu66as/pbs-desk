@@ -65,6 +65,34 @@ wird nach `LANGUAGE`/`LANG` (Deutsch bei `de*`, sonst Englisch). Das Protokoll
 - Wiederherstellen: Sicherungen auflisten, ein Archiv schreibgeschützt einhängen
   und im Dateimanager öffnen; dazu der Verlauf der Backup-Läufe
 
+## Windows
+
+Eine Windows-Fassung liegt in `windows/`. Sie hat denselben Tray, dasselbe
+Einstellungsfenster und denselben Wiederherstellen-Dialog (PySide6) und führt die
+Sicherungen als geplante Aufgaben unter SYSTEM aus.
+
+Installation aus dem entpackten Repo in einer PowerShell als Administrator:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
+```
+
+Das Skript richtet ein eigenes Python mit PySide6 unter `C:\Program Files\PBS-Desk`
+ein, dazu die Aufgaben, den Tray-Autostart und den Datenordner
+`C:\ProgramData\PBS-Desk`. Danach unter Einstellungen Server, Datenspeicher und
+API-Token eintragen.
+
+Die Sicherung selbst übernehmen zwei Engines, die nicht Teil dieses Repos sind.
+Sie gehören nach `C:\Program Files\PBS-Desk\bin`:
+
+- `proxmoxbackup-directory.exe`: Datei-Backup von `C:\` aus einer VSS-Schattenkopie (täglich).
+- `pbsmachinebackup.exe`: Disk-Image der Systemplatte (alle 4 Wochen oder per Tray).
+  Das Zurückspielen auf eine neue SSD steht in `windows/IMAGE.md`.
+
+Das Datei-Backup sichert keine NTFS-ACLs, alternativen Datenströme (ADS),
+Dateiattribute und Hardlinks, nur Inhalt, Namen und Verzeichnisstruktur. Wer
+sie braucht oder nach einem Plattenausfall ein startfähiges System will, nimmt das Disk-Image.
+
 ## Aufbau
 
 | Pfad                              | Inhalt                                        |

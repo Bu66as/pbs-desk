@@ -1,0 +1,135 @@
+# Englische Texte nur fuer PBS-Desk unter Windows (windows/*.py*)
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+
+msgid "%d.%m.%Y %H:%M"
+msgstr "%Y-%m-%d %H:%M"
+
+msgid "Abgebrochen: keine Administratorrechte."
+msgstr "Cancelled: no administrator rights."
+
+msgid "Verbindung fehlgeschlagen: {fehler}"
+msgstr "Connection failed: {fehler}"
+
+msgid "Noch keine Sicherung auf dem Server."
+msgstr "No backup on the server yet."
+
+msgid "{programm} – Wiederherstellen"
+msgstr "{programm} – Restore"
+
+msgid "Sicherung:"
+msgstr "Backup:"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Ziel:"
+msgstr "Destination:"
+
+msgid "Ordner wählen …"
+msgstr "Choose folder …"
+
+msgid "Zielordner"
+msgstr "Destination folder"
+
+msgid "Gleichnamige Dateien im Zielordner werden überschrieben."
+msgstr "Files with the same name in the destination folder will be overwritten."
+
+msgid "Katalog nicht lesbar: {fehler}"
+msgstr "Cannot read catalog: {fehler}"
+
+msgid "Wiederherstellen fehlgeschlagen: {fehler}"
+msgstr "Restore failed: {fehler}"
+
+msgid "Wiederhergestellt nach:\n{ziel}"
+msgstr "Restored to:\n{ziel}"
+
+msgid "{programm} – Einstellungen"
+msgstr "{programm} – Settings"
+
+msgid "Zeitplan"
+msgstr "Schedule"
+
+msgid "Mehrere Uhrzeiten mit Komma trennen, z. B. 07:30,12:30,18:00"
+msgstr "Separate several times with commas, e.g. 07:30,12:30,18:00"
+
+msgid "Während der Arbeitszeit nicht automatisch sichern"
+msgstr "No automatic backup during working hours"
+
+msgid " Uhr"
+msgstr " h"
+
+msgid "Arbeitszeit (Mo–Fr):"
+msgstr "Working hours (Mon–Fri):"
+
+msgid "Höchstens ein automatisches Backup pro Tag (Tagessperre)"
+msgstr "At most one automatic backup per day (daily lock)"
+
+msgid "Ein Start von Hand umgeht beide Sperren."
+msgstr "A manual start bypasses both locks."
+
+msgid "Ordner oder Laufwerk:"
+msgstr "Folder or drive:"
+
+msgid "Schattenkopie (VSS) verwenden"
+msgstr "Use shadow copy (VSS)"
+
+msgid "fehlt"
+msgstr "missing"
+
+msgid "Server nicht erreichbar: {fehler}"
+msgstr "Server not reachable: {fehler}"
+
+msgid "Fingerabdruck des Servers:\n{fp}\n\nÜbernehmen?"
+msgstr "Server fingerprint:\n{fp}\n\nUse it?"
+
+msgid "Verbindung in Ordnung – {n} Sicherungen gefunden."
+msgstr "Connection OK – {n} backups found."
+
+msgid "Uhrzeiten bitte als HH:MM, mit Komma getrennt."
+msgstr "Please enter times as HH:MM, separated by commas."
+
+msgid "Die Arbeitszeit muss vor ihrem Ende beginnen."
+msgstr "Working hours must start before they end."
+
+msgid "Speichern fehlgeschlagen: {fehler}"
+msgstr "Saving failed: {fehler}"
+
+msgid "Die Aufgabenplanung ließ sich nicht umstellen."
+msgstr "Could not update the Task Scheduler."
+
+msgid "Backup fertig. Der Rechner fährt in {s} Sekunden herunter."
+msgstr "Backup finished. The computer will shut down in {s} seconds."
+
+msgid "Letzter Versuch fehlgeschlagen"
+msgstr "Last attempt failed"
+
+msgid "Backup konnte nicht gestartet werden."
+msgstr "Backup could not be started."
+
+msgid "Backup jetzt starten?"
+msgstr "Start backup now?"
+
+msgid "Backup fehlgeschlagen – der Rechner bleibt an."
+msgstr "Backup failed – the computer stays on."
+
+msgid "Noch kein Protokoll vorhanden."
+msgstr "No log yet."
+
+msgid "Kein Backup-Server eingetragen."
+msgstr "No backup server configured."
+
+msgid "Fingerabdruck des Servers stimmt nicht."
+msgstr "Server fingerprint does not match."
+
+
+msgid "seit {zeit} Uhr ({art})"
+msgstr "since {zeit} ({art})"
+
+msgid "von Hand"
+msgstr "manual"
+
+msgid "geplant"
+msgstr "scheduled"

@@ -5,6 +5,7 @@
 #   unterwegs gedrosselt auf das Offsite-Ziel aus. Ein im Einstellungsfenster
 #   eingetragener eigener Server gilt allein.
 # Pre-Flight: max. 1x/Tag erfolgreich, nicht in der Arbeitszeit, nur am Netzteil.
+# Waehrend des Laufs: Fortschritt in /run/pbs-desk/fortschritt.json fuer pbs-tray.
 set -uo pipefail
 
 CONF=${PBS_BACKUP_CONF:-/etc/default/pbs-backup}   # Umlenkung nur fuer Tests
@@ -98,6 +99,7 @@ declare -A EN=(
   ["Backup überfällig"]="Backup overdue"
   ["Letzte erfolgreiche Sicherung von %s vor %s Tagen. Siehe %s"]="Last successful backup of %s was %s days ago. See %s"
   ["Backup läuft — bitte nicht herunterfahren"]="Backup running — please do not shut down"
+  ["Backup läuft — danach fährt der Rechner herunter"]="Backup running — the computer shuts down afterwards"
   ["Sicherung von %s nach %s läuft (deshalb drehen die Lüfter hoch). Tempo: %s (%s). Die Meldung verschwindet, wenn der Lauf fertig ist."]="Backing up %s to %s (that is why the fans spin up). Speed: %s (%s). This message disappears when the run is finished."
   ["PBS-Backup läuft seit %s — bitte nicht herunterfahren"]="PBS backup running since %s — please do not shut down"
   ["Backup fertig ✓"]="Backup finished ✓"
@@ -235,6 +237,8 @@ ROOT_ID=""; HOME_ID=""
 cleanup() {
   [[ -n "$ROOT_ID" ]] && snapper -c root delete "$ROOT_ID" 2>/dev/null && echo "root-snap $ROOT_ID gelöscht"
   [[ -n "$HOME_ID" ]] && snapper -c home delete "$HOME_ID" 2>/dev/null && echo "home-snap $HOME_ID gelöscht"
+  rm -f "${FS_DATEI:-}" "${GESAMT_DATEI:-}"
+  [[ -n "${DU_PID:-}" ]] && { pkill -P "$DU_PID" 2>/dev/null; kill "$DU_PID" 2>/dev/null; }
   return 0
 }
 trap cleanup EXIT
@@ -263,22 +267,107 @@ EXARGS=()
 for p in "${EXCLUDES[@]}"; do EXARGS+=(--exclude "$p"); done
 
 echo "--- Backup Ziel=$ZIEL_NAME ($ZIEL) ${#EXCLUDES[@]} Ausschluesse, Drossel=${PBS_RATE:-unbegrenzt} [$RATE_QUELLE] ---"
+# --- Fortschritt fuer den Tray: /run/pbs-desk/fortschritt.json (0644, ohne Geheimnisse).
+# Prozent = vom Client gelesene Bytes (rchar aus /proc/<pid>/io) / vorab per du
+# gezaehlte Quellgroesse ohne Ausschluesse; Restzeit aus der bisherigen Rate.
+# Ohne beides: Schaetzung aus der Dauer des letzten erfolgreichen Laufs
+# (geschaetzt=true, der Tray schreibt "ca."). Vor dem Ende nie ueber 99 %.
+FS_DIR=/run/pbs-desk
+FS_DATEI=$FS_DIR/fortschritt.json
+LETZTER_LAUF=$STAMP_DIR/last-run   # "dauer_s gesamt_bytes" des letzten Erfolgs
+FS_TAKT=5
+FS_MELDUNGEN=0; FS_MAX=0; FS_PROZENT=0
+
+quellgroesse() {
+  # Ausschluss-Muster gelten relativ zur Archivwurzel ("/*/.cache" -> /home/x/.cache);
+  # abgezogen wird nur, was auf demselben Dateisystem liegt (du -x zaehlt nur das).
+  local summe=0 a src p f n dev
+  for a in "${ARCHIVE[@]}"; do
+    src=${a#*:}
+    dev=$(stat -c %d "$src" 2>/dev/null) || continue
+    n=$(du -sxb "$src" 2>/dev/null | cut -f1); summe=$(( summe + ${n:-0} ))
+    for p in "${EXCLUDES[@]}"; do
+      for f in "${src%/}"$p; do
+        [[ -e "$f" && "$(stat -c %d "$f" 2>/dev/null)" == "$dev" ]] || continue
+        n=$(du -sxb "$f" 2>/dev/null | cut -f1); summe=$(( summe - ${n:-0} ))
+      done
+    done
+  done
+  (( summe > 0 )) && echo "$summe"
+}
+
+fs_schreiben() {
+  # $1=prozent $2=rest_s|null $3=verarbeitet_bytes $4=gesamt_bytes $5=geschaetzt
+  local tmp
+  install -d -m 0755 "$FS_DIR" && tmp=$(mktemp "$FS_DIR/.fortschritt.XXXXXX") || return 0
+  printf '{"prozent": %s, "rest_s": %s, "verarbeitet_bytes": %s, "gesamt_bytes": %s, "geschaetzt": %s, "start": %s, "stand": %s}\n' \
+    "$1" "$2" "$3" "$4" "$5" "$RUN_START" "$(date +%s)" > "$tmp" \
+    && chmod 0644 "$tmp" && mv -f "$tmp" "$FS_DATEI" || { rm -f "$tmp"; return 0; }
+  FS_MELDUNGEN=$(( FS_MELDUNGEN + 1 ))
+  (( $1 > FS_MAX )) && FS_MAX=$1
+  return 0
+}
+
+fs_messen() {
+  # $1 = PID von systemd-inhibit, der Client laeuft als dessen Kind
+  local dauer cpid bytes="" gesamt p rest=null gesch=false ld="" lg=""
+  dauer=$(( $(date +%s) - RUN_START ))
+  cpid=$(pgrep -P "$1" | head -n1)
+  [[ -n "$cpid" ]] && bytes=$(awk '/^rchar:/{print $2}' "/proc/$cpid/io" 2>/dev/null)
+  [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+  gesamt=$(cat "$GESAMT_DATEI" 2>/dev/null); [[ "$gesamt" =~ ^[0-9]+$ ]] || gesamt=0
+  [[ -r "$LETZTER_LAUF" ]] && read -r ld lg _ < "$LETZTER_LAUF"
+  if (( gesamt > 0 && bytes > 0 && dauer > 0 )); then
+    p=$(( bytes * 100 / gesamt ))
+    rest=$(( (gesamt > bytes ? gesamt - bytes : 0) * dauer / bytes ))
+  elif [[ "$ld" =~ ^[1-9][0-9]*$ ]]; then
+    gesch=true; p=$(( dauer * 100 / ld )); rest=$(( ld > dauer ? ld - dauer : 0 ))
+    (( gesamt > 0 )) || { [[ "$lg" =~ ^[0-9]+$ ]] && gesamt=$lg; }
+  else
+    gesch=true; p=0
+  fi
+  (( p > 99 )) && p=99
+  (( p < FS_PROZENT )) && p=$FS_PROZENT   # der Balken laeuft nie rueckwaerts
+  FS_PROZENT=$p
+  fs_schreiben "$p" "$rest" "$bytes" "$gesamt" "$gesch"
+}
+
 RUN_START=$(date +%s)
-notify_desktop normal "$(t "Backup läuft — bitte nicht herunterfahren")" \
+# Hat der Benutzer im Tray "danach herunterfahren" gewaehlt, legt pbs-tray
+# einen Merker in seinem Laufzeitordner ab; dann passt "bitte nicht" nicht.
+LAUF_TITEL="Backup läuft — bitte nicht herunterfahren"
+if [[ -n "$NOTIFY_USER" ]] && [[ -e "/run/user/$(id -u "$NOTIFY_USER" 2>/dev/null)/pbs-desk-abschalten" ]]; then
+  LAUF_TITEL="Backup läuft — danach fährt der Rechner herunter"
+fi
+notify_desktop normal "$(t "$LAUF_TITEL")" \
   "$(t "Sicherung von %s nach %s läuft (deshalb drehen die Lüfter hoch). Tempo: %s (%s). Die Meldung verschwindet, wenn der Lauf fertig ist." \
       "$DEVICE_NAME" "$ZIEL_NAME" "${PBS_RATE:-$(t unbegrenzt)}" "$(t "$RATE_QUELLE")")" persist
-if systemd-inhibit --what=shutdown:sleep:idle --mode=block --who="pbs-backup" \
+GESAMT_DATEI=$(mktemp)
+quellgroesse > "$GESAMT_DATEI" &
+DU_PID=$!
+systemd-inhibit --what=shutdown:sleep:idle --mode=block --who="pbs-backup" \
      --why="$(t "PBS-Backup läuft seit %s — bitte nicht herunterfahren" "$(date +%H:%M)")" \
    proxmox-backup-client backup "${ARCHIVE[@]}" \
      "${NSARGS[@]}" --backup-id "$BACKUP_ID" \
-     "${RATEARGS[@]}" "${EXARGS[@]}"; then
+     "${RATEARGS[@]}" "${EXARGS[@]}" &
+LAUF_PID=$!
+while kill -0 "$LAUF_PID" 2>/dev/null; do
+  fs_messen "$LAUF_PID"
+  for (( i = 0; i < FS_TAKT; i++ )); do kill -0 "$LAUF_PID" 2>/dev/null || break; sleep 1; done
+done
+wait "$LAUF_PID"; rc=$?
+GESAMT=$(cat "$GESAMT_DATEI" 2>/dev/null)
+echo "FORTSCHRITT-ENDE meldungen=$FS_MELDUNGEN max=$FS_MAX"
+rm -f "$FS_DATEI"
+if (( rc == 0 )); then
   echo "$TODAY" > "$STAMP"
   echo "$TODAY $ZIEL_NAME" > "$STAMP_DIR/last-target"
-  MIN=$(( ( $(date +%s) - RUN_START ) / 60 ))
+  DAUER_S=$(( $(date +%s) - RUN_START ))
+  echo "$DAUER_S ${GESAMT:-0}" > "$LETZTER_LAUF"
+  MIN=$(( DAUER_S / 60 ))
   echo "=== DONE $(date -Is) Ziel=$ZIEL_NAME Dauer=${MIN}min — Stamp gesetzt ==="
   notify_desktop normal "$(t "Backup fertig ✓")" "$(t "Sicherung von %s nach %s erfolgreich (Dauer %s min)." "$DEVICE_NAME" "$ZIEL_NAME" "$MIN")" ersetzt
 else
-  rc=$?
   echo "=== FEHLER rc=$rc $(date -Is) Ziel=$ZIEL_NAME ==="
   notify_desktop critical "$(t "Backup FEHLGESCHLAGEN ✗")" "$(t "Sicherung von %s nach %s mit Fehler rc=%s beendet. Siehe %s" "$DEVICE_NAME" "$ZIEL_NAME" "$rc" "$LOG")" ersetzt
   exit $rc

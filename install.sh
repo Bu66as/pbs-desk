@@ -54,6 +54,7 @@ entfernen() {
   for f in "${SBIN[@]}"; do rm -f "$PREFIX/sbin/$f"; done
   for f in "${BIN[@]}"; do rm -f "$PREFIX/bin/$f"; done
   for f in "${ICONS[@]}"; do rm -f "$ICON_DIR/$f.svg"; done
+  rm -f /etc/polkit-1/rules.d/50-pbs-desk.rules
   rm -f /etc/systemd/system/pbs-backup.service /etc/systemd/system/pbs-backup.timer \
         /etc/xdg/autostart/pbs-tray.desktop /usr/share/applications/pbs-desk-tray.desktop \
         /usr/share/applications/pbs-restore.desktop "$POLKIT" "$MO" /etc/logrotate.d/pbs-backup
@@ -136,6 +137,12 @@ install -Dm 0644 "$QUELLE/desktop/pbs-tray.desktop"      /etc/xdg/autostart/pbs-
 install -Dm 0644 "$QUELLE/desktop/pbs-desk-tray.desktop" /usr/share/applications/pbs-desk-tray.desktop
 install -Dm 0644 "$QUELLE/desktop/pbs-restore.desktop"   /usr/share/applications/pbs-restore.desktop
 install -Dm 0644 "$QUELLE/polkit/de.exnolim.pbsdesk.policy" "$POLKIT"
+# pkexec vergleicht den aufgeloesten Pfad: wo sbin ein Link auf bin ist (Fedora 44),
+# greift die Aktion sonst nicht und es kommt die allgemeine root-Abfrage
+HELFER_ECHT=$(readlink -f "$PREFIX/sbin/pbs-restore-helper")
+sed -i "s#/usr/local/sbin/pbs-restore-helper#$HELFER_ECHT#" "$POLKIT"
+# "Backup jetzt starten" im Tray ohne Passwortabfrage (nur pbs-backup.service)
+install -Dm 0644 "$QUELLE/polkit/50-pbs-desk.rules" /etc/polkit-1/rules.d/50-pbs-desk.rules
 install -Dm 0644 "$QUELLE/systemd/pbs-backup.service" /etc/systemd/system/pbs-backup.service
 install -Dm 0644 "$QUELLE/systemd/pbs-backup.timer"   /etc/systemd/system/pbs-backup.timer
 install -Dm 0644 "$QUELLE/config/logrotate.pbs-backup" /etc/logrotate.d/pbs-backup

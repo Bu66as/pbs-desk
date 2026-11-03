@@ -274,3 +274,21 @@ msgstr "Shut down after the backup"
 
 msgid "Sichern und danach herunterfahren"
 msgstr "Back up now, then shut down"
+
+msgid "{m} min"
+msgstr "{m} min"
+
+msgid "{h} h {m} min"
+msgstr "{h} h {m} min"
+
+msgid "ca. {prozent} %"
+msgstr "approx. {prozent} %"
+
+msgid "{prozent} %"
+msgstr "{prozent} %"
+
+msgid "Sicherung läuft: {prozent}"
+msgstr "Backup running: {prozent}"
+
+msgid "Sicherung läuft: {prozent} – noch ca. {rest}"
+msgstr "Backup running: {prozent} – about {rest} left"

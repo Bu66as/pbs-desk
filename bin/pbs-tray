@@ -15,6 +15,7 @@ sichtbar war, dass ueberhaupt eines laeuft.
 """
 import gettext
 import hashlib
+import json
 import os
 import re
 import ssl
@@ -59,6 +60,7 @@ TIMER = "/etc/systemd/system/pbs-backup.timer"
 PBS_RATE = "/usr/local/bin/pbs-rate"
 PBS_RESTORE = "/usr/local/bin/pbs-restore"
 UNIT = "pbs-backup.service"
+FORTSCHRITT_DATEI = "/run/pbs-desk/fortschritt.json"
 FORTSCHRITT = re.compile(r"processed ([\d.]+ \w+) in ([\dhm ]+), uploaded ([\d.]+ \w+)")
 DROSSEL = re.compile(r"Drossel=([^\s\)\[]+)(?:\s*\[([^\]]+)\])?")
 
@@ -564,6 +566,21 @@ def symbol(name):
     return QIcon.fromTheme(name, QIcon.fromTheme(ERSATZ_SYMBOL[name]))
 
 
+# pbs-backup liest diese Datei, damit seine Desktop-Meldung zum Merker passt.
+ABSCHALT_MERKER = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}",
+                               "pbs-desk-abschalten")
+
+
+def abschalt_merker(an):
+    try:
+        if an:
+            open(ABSCHALT_MERKER, "w").close()
+        else:
+            os.unlink(ABSCHALT_MERKER)
+    except OSError:
+        pass
+
+
 class AbschaltDialog(QDialog):
     """Countdown vor dem Herunterfahren; Abbrechen laesst den Rechner an."""
     SEKUNDEN = 60
@@ -599,6 +616,50 @@ class AbschaltDialog(QDialog):
             self.zeigen()
 
 
+def fortschritt_daten():
+    """Prozent und Restzeit des laufenden Backups aus fortschritt.json.
+
+    pbs-backup (root) schreibt die Datei alle 5 s und entfernt sie nach dem
+    Lauf. Mehr als 99 % zeigt der Tray vor dem Ende nie an.
+    """
+    try:
+        with open(FORTSCHRITT_DATEI) as f:
+            d = json.load(f)
+        prozent = max(0, min(int(d["prozent"]), 99))
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+    rest = d.get("rest_s")
+    return {"prozent": prozent,
+            "rest_s": int(rest) if isinstance(rest, (int, float)) and rest >= 0 else None,
+            "geschaetzt": d.get("geschaetzt") is True}
+
+
+def restzeit(sekunden):
+    minuten = max(1, (sekunden + 59) // 60)
+    if minuten < 60:
+        return _("{m} min").format(m=minuten)
+    return _("{h} h {m} min").format(h=minuten // 60, m=minuten % 60)
+
+
+def prozent_text(d):
+    if d["geschaetzt"]:
+        return _("ca. {prozent} %").format(prozent=d["prozent"])
+    return _("{prozent} %").format(prozent=d["prozent"])
+
+
+def fortschritt_zeile(d):
+    """z.B. 'Sicherung läuft: 42 % – noch ca. 12 min'."""
+    if d["rest_s"] is None:
+        return _("Sicherung läuft: {prozent}").format(prozent=prozent_text(d))
+    return _("Sicherung läuft: {prozent} – noch ca. {rest}").format(
+        prozent=prozent_text(d), rest=restzeit(d["rest_s"]))
+
+
+def balken(prozent, breite=16):
+    voll = prozent * breite // 100
+    return "█" * voll + "░" * (breite - voll)
+
+
 class Tray(QSystemTrayIcon):
     def __init__(self):
         super().__init__()
@@ -607,30 +668,43 @@ class Tray(QSystemTrayIcon):
         self.menu.aboutToShow.connect(self.menue_bauen)
         self.activated.connect(self.geklickt)
         self._abschalten = None
-        self.aktualisieren()
+        self._balken = None
+        abschalt_merker(False)   # Rest eines abgestuerzten Trays
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.aktualisieren)
-        self.timer.start(10_000)
+        self.aktualisieren()
+        self.timer.start()
         self.show()
 
     # --- Anzeige ---------------------------------------------------------
     def aktualisieren(self):
         aktiv, roh = laeuft()
+        fd = None
         d, alter = letzter_erfolg()
         rate, quelle = naechste_rate()
 
         if aktiv:
             icon, kopf = "pbs-desk-laeuft", _("Backup läuft gerade")
+            fd = fortschritt_daten()
             fs = fortschritt()
             lr, lq = laufende_rate()
             tempo = _("Tempo: {rate}").format(rate=lr) + (f" ({lq})" if lq else "") if lr else None
-            zeilen = [kopf, fs or _("startet …")]
+            if fd:
+                kopf = fortschritt_zeile(fd)
+                zeilen = [kopf, balken(fd["prozent"]) + "  " + prozent_text(fd)]
+                if fs:
+                    zeilen.append(fs)
+            else:
+                zeilen = [kopf, fs or _("startet …")]
             lz = laufendes_ziel()
             if lz:
                 zeilen.append(_("Ziel: {ziel}").format(ziel=lz))
             if tempo:
                 zeilen.append(tempo)
-            zeilen += ["", _("Bitte nicht herunterfahren.")]
+            # Mit gesetztem Merker faehrt der Rechner selbst herunter; die Bitte,
+            # nicht herunterzufahren, wuerde dem widersprechen.
+            zeilen += ["", _("Danach fährt der Rechner herunter.") if self._abschalten
+                       else _("Bitte nicht herunterfahren.")]
         else:
             if alter is None:
                 icon, kopf = "pbs-desk-warnung", _("Noch kein erfolgreiches Backup")
@@ -652,13 +726,24 @@ class Tray(QSystemTrayIcon):
                 zeilen.append(_("Unterwegs (Offsite): {rate} ({quelle})").format(rate=rate, quelle=quelle))
 
         if self._abschalten:
-            zeilen.append(_("Danach fährt der Rechner herunter."))
+            if not aktiv:
+                zeilen.append(_("Danach fährt der Rechner herunter."))
             self.abschalten_pruefen(aktiv)
 
         self.setIcon(symbol(icon))
         self.setToolTip(_("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet())
                         + "\n" + "\n".join(zeilen))
         self._aktiv, self._roh, self._kopf = aktiv, roh, kopf
+        self._fd = fd if aktiv else None
+        # Waehrend eines Laufs alle 5 s nachsehen, sonst alle 10 s.
+        self.timer.setInterval(5_000 if aktiv else 10_000)
+        if self._balken is not None:
+            try:
+                if self._fd:
+                    self._balken.setText("   " + balken(self._fd["prozent"]) + "  " + prozent_text(self._fd))
+                    self._kopf_aktion.setText(fortschritt_zeile(self._fd))
+            except RuntimeError:   # Menue wurde neu gebaut, Eintrag ist weg
+                self._balken = None
 
     def geklickt(self, grund):
         if grund == QSystemTrayIcon.ActivationReason.Trigger:
@@ -678,6 +763,12 @@ class Tray(QSystemTrayIcon):
                            _("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet()))
         m.addSeparator()
         kopf = m.addAction(self._kopf)
+        self._balken = None
+        if self._aktiv and self._fd:
+            # Textbalken statt QProgressBar: Widgets im Menue zeigt Plasma (Wayland)
+            # nicht an. Laeuft bei offenem Menue mit (aktualisieren()).
+            self._kopf_aktion = kopf
+            self._balken = m.addAction("   " + balken(self._fd["prozent"]) + "  " + prozent_text(self._fd))
         if self._aktiv:
             fs = fortschritt()
             if fs:
@@ -751,12 +842,15 @@ class Tray(QSystemTrayIcon):
     def abschalten_umschalten(self, an):
         if not an:
             self._abschalten = None
+            abschalt_merker(False)
             self.aktualisieren()
             return
         aktiv, _roh = laeuft()
         self._abschalten = {"kennung": lauf_kennung(), "stempel": stempel(), "gesehen": aktiv}
+        abschalt_merker(True)
         if not aktiv and not self.starten():
             self._abschalten = None
+            abschalt_merker(False)
         self.aktualisieren()
 
     def abschalten_pruefen(self, aktiv):
@@ -766,6 +860,7 @@ class Tray(QSystemTrayIcon):
             z["gesehen"] = True
         elif z["gesehen"] or lauf_kennung() != z["kennung"]:
             self._abschalten = None
+            abschalt_merker(False)
             QTimer.singleShot(0, lambda: self.lauf_fertig(z))
 
     def lauf_fertig(self, z):
@@ -817,6 +912,7 @@ def main():
     # und das Tray-Icon verschwaende lautlos (Event-Loop laeuft dann leer weiter).
     tray = Tray()
     app._tray = tray
+    app.aboutToQuit.connect(lambda: abschalt_merker(False))
     return app.exec()
 
 

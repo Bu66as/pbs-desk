@@ -64,6 +64,32 @@ chosen from `LANGUAGE`/`LANG` (German for `de*`, English otherwise). The log
 - Restore: list backups, mount an archive read-only and open it in the file
   manager; plus a history of backup runs
 
+## Windows
+
+A Windows version lives in `windows/`. It has the same tray, settings window and
+restore dialog (PySide6) and runs the backups as scheduled tasks under SYSTEM.
+
+Install from the unpacked repo in an administrator PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\install.ps1
+```
+
+The script sets up a private Python with PySide6 under `C:\Program Files\PBS-Desk`,
+the tasks, the tray autostart and the data folder `C:\ProgramData\PBS-Desk`.
+Then enter server, datastore and API token under Settings.
+
+The backup itself is done by two engines that are not part of this repo. Put them
+in `C:\Program Files\PBS-Desk\bin`:
+
+- `proxmoxbackup-directory.exe`: file backup of `C:\` from a VSS shadow copy (daily).
+- `pbsmachinebackup.exe`: disk image of the system drive (every 4 weeks, or from the
+  tray). `windows/IMAGE.md` (in German) covers restoring an image onto a new SSD.
+
+The file backup does not keep NTFS ACLs, alternate data streams (ADS), file
+attributes or hardlinks, only content, names and folder structure. Use the disk
+image if you need those, or a bootable system after a disk failure.
+
 ## Layout
 
 | Path                              | Content                                        |
