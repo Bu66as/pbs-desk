@@ -1,0 +1,44 @@
+name: Windows setup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - "icons/**"
+      - "po/**"
+      - "tools/msgfmt.py"
+      - ".github/workflows/windows-setup.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          if (-not (Test-Path $iscc)) { throw "iscc not found" }
+          "ISCC=$iscc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: Build PBS-Desk-Setup.exe
+        shell: pwsh
+        run: |
+          $version = "0.9.${{ github.run_number }}"
+          "VERSION=$version" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          & windows\installer\build.ps1 -Version $version -Iscc $env:ISCC
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PBS-Desk-Setup-${{ env.VERSION }}
+          path: windows/installer/Output/PBS-Desk-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 30

@@ -18,9 +18,15 @@
     (SYSTEM, ohne Ausloeser, von angemeldeten Benutzern startbar).
   - Tray-Autostart fuer alle Benutzer: HKLM\...\Run "PBS-Desk".
   Die Engine (bin\proxmoxbackup-directory.exe) richtet Etappe 1 ein.
+
+  -NurEinrichten ueberspringt Python, PySide6 und das Kopieren der Programme
+  und richtet nur Daten, Rechte, Aufgaben und Autostart ein. So ruft die
+  Setup.exe (installer\pbs-desk.iss) das Skript auf, nachdem sie die Dateien
+  selbst nach C:\Program Files\PBS-Desk gelegt hat.
 #>
 param(
     [string]$PaketOrdner = "",
+    [switch]$NurEinrichten,
     [string]$PythonVersion = "3.12.10"
 )
 $ErrorActionPreference = "Stop"
@@ -44,6 +50,7 @@ function Nativ {
 }
 
 # --- Python und PySide6 ------------------------------------------------------
+if (-not $NurEinrichten) {
 New-Item -ItemType Directory -Force "$Prog\bin", "$Prog\app", "$Prog\icons" | Out-Null
 if (-not (Test-Path $Py)) {
     Schritt "Python $PythonVersion"
@@ -79,6 +86,8 @@ if ($LASTEXITCODE -ne 0) { throw "Uebersetzungen nicht erzeugt." }
 # Startmenue-Symbol: .ico aus dem SVG (Qt rendert, Windows-Verknuepfungen wollen .ico)
 $env:QT_QPA_PLATFORM = "offscreen"
 Nativ $Py -c "import sys;from PySide6.QtGui import QGuiApplication,QIcon;a=QGuiApplication(['x']);QIcon(sys.argv[1]).pixmap(256,256).save(sys.argv[2],'ICO')" "$Prog\icons\pbs-desk.svg" "$Prog\icons\pbs-desk.ico"
+
+}  # Ende -not $NurEinrichten
 
 # --- Daten und Rechte ----------------------------------------------------------
 Schritt "Daten unter $Daten"
