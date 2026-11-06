@@ -63,15 +63,21 @@ class EinstellungenDialog(QDialog):
             s.setSuffix(_(" Uhr"))
             zeile.addWidget(s)
         f.addRow(_("Arbeitszeit (Mo–Fr):"), zeile)
-        self.tag = QCheckBox(_("Höchstens ein automatisches Backup pro Tag (Tagessperre)"))
+        self.tag = QCheckBox(_("Nur einmal am Tag automatisch sichern"))
+        self.tag.setToolTip(_("Ist heute schon eine Sicherung gelungen, fallen die weiteren "
+                              "geplanten Zeiten dieses Tages aus."))
         self.tag.setChecked(w["TAGESSPERRE"] == "1")
         f.addRow(self.tag)
-        f.addRow(QLabelHinweis(_("Ein Start von Hand umgeht beide Sperren.")))
+        f.addRow(QLabelHinweis(_("„Backup jetzt starten …“ im Menü sichert immer, auch in der "
+                                 "Arbeitszeit und mehrmals am Tag.")))
         lay.addWidget(zeit)
 
         quelle = QGroupBox(_("Sicherung"))
         f = QFormLayout(quelle)
         self.quelle = QLineEdit(w["QUELLE"])
+        self.quelle.setPlaceholderText(_("z. B. C:\\ oder C:\\Users"))
+        self.quelle.setToolTip(_("Was gesichert wird. Die erste Sicherung überträgt alles und kann "
+                                 "Stunden dauern, danach nur noch Änderungen."))
         f.addRow(_("Ordner oder Laufwerk:"), self.quelle)
         self.vss = QCheckBox(_("Schattenkopie (VSS) verwenden"))
         self.vss.setChecked(w["VSS"] == "1")
@@ -82,21 +88,33 @@ class EinstellungenDialog(QDialog):
         f = QFormLayout(server)
         u = urllib.parse.urlparse(c.get("PBS_REPOSITORY", ""))
         self.feld = {}
-        for k, text, wert in (
-                ("host", _("Server:"), u.hostname or ""),
-                ("port", _("Port:"), str(u.port or 8007)),
-                ("PBS_DATASTORE", _("Datastore:"), c.get("PBS_DATASTORE", "")),
-                ("PBS_TOKEN_ID", _("API-Token:"), c.get("PBS_TOKEN_ID", "")),
-                ("geheimnis", _("Token-Geheimnis:"), ""),
-                ("PBS_NAMESPACE", _("Namespace:"), c.get("PBS_NAMESPACE", "")),
-                ("PBS_BACKUP_ID", _("Backup-ID:"), c.get("PBS_BACKUP_ID", "")),
-                ("PBS_FINGERPRINT", _("Fingerabdruck:"), c.get("PBS_FINGERPRINT", ""))):
+        # Erklaerung als Tooltip und graue Zeile darunter, Platzhalter "z. B. …"
+        for k, text, wert, hilfe, bsp in (
+                ("host", _("Server:"), u.hostname or "", _("Adresse des Backup-Servers"),
+                 _("z. B. backup.example.org")),
+                ("port", _("Port:"), str(u.port or 8007), "", "8007"),
+                ("PBS_DATASTORE", _("Datastore:"), c.get("PBS_DATASTORE", ""),
+                 _("Speicherbereich auf dem Backup-Server"), _("z. B. backup")),
+                ("PBS_NAMESPACE", _("Namespace:"), c.get("PBS_NAMESPACE", ""),
+                 _("Unterordner im Speicherbereich, meist für dieses Gerät"), _("z. B. buero/pc1 (optional)")),
+                ("PBS_TOKEN_ID", _("API-Token:"), c.get("PBS_TOKEN_ID", ""),
+                 _("Benutzername für die Sicherung, Form benutzer@realm!name"), _("z. B. sicherung@pbs!pc1")),
+                ("geheimnis", _("Token-Geheimnis:"), "", _("Passwort zum Token"), ""),
+                ("PBS_BACKUP_ID", _("Backup-ID:"), c.get("PBS_BACKUP_ID", ""),
+                 _("Name, unter dem dieses Gerät gesichert wird"), ""),
+                ("PBS_FINGERPRINT", _("Fingerabdruck:"), c.get("PBS_FINGERPRINT", ""),
+                 _("Kennung des Servers, schützt vor Verwechslung"), _("z. B. 88:b9:4c:…"))):
             self.feld[k] = QLineEdit(wert)
+            if bsp:
+                self.feld[k].setPlaceholderText(bsp)
+            if hilfe:
+                self.feld[k].setToolTip(hilfe)
             f.addRow(text, self.feld[k])
+            if hilfe:
+                f.addRow("", QLabelHinweis(hilfe))
         self.feld["geheimnis"].setEchoMode(QLineEdit.EchoMode.Password)
         self.feld["geheimnis"].setPlaceholderText(
             _("unverändert") if c.get("PBS_TOKEN_SECRET") else _("fehlt"))
-        self.feld["PBS_TOKEN_ID"].setPlaceholderText("benutzer@realm!tokenname")
         self.feld["PBS_BACKUP_ID"].setPlaceholderText(os.environ.get("COMPUTERNAME", "").lower())
         knoepfe = QHBoxLayout()
         b = QPushButton(_("Vom Server holen"))
@@ -128,7 +146,7 @@ class EinstellungenDialog(QDialog):
         try:
             fp = p.fingerabdruck(self.feld["host"].text().strip(), self.feld["port"].text().strip() or 8007)
         except Exception as e:
-            QMessageBox.warning(self, p.PROGRAMM, _("Server nicht erreichbar: {fehler}").format(fehler=e))
+            QMessageBox.warning(self, p.PROGRAMM, p.grund_text("unerreichbar"))
             return
         if QMessageBox.question(self, p.PROGRAMM, _("Fingerabdruck des Servers:\n{fp}\n\nÜbernehmen?")
                                 .format(fp=fp)) == QMessageBox.StandardButton.Yes:
@@ -138,7 +156,7 @@ class EinstellungenDialog(QDialog):
         try:
             n = len(p.Server(self.server_conf()).snapshots())
         except Exception as e:
-            QMessageBox.warning(self, p.PROGRAMM, _("Verbindung fehlgeschlagen: {fehler}").format(fehler=e))
+            QMessageBox.warning(self, p.PROGRAMM, p.klartext(e))
             return
         QMessageBox.information(self, p.PROGRAMM,
                                 _("Verbindung in Ordnung – {n} Sicherungen gefunden.").format(n=n))
@@ -156,7 +174,8 @@ class EinstellungenDialog(QDialog):
                   "WORK_START": str(self.ws.value()), "WORK_END": str(self.we.value()),
                   "TAGESSPERRE": "1" if self.tag.isChecked() else "0",
                   "QUELLE": self.quelle.text().strip() or "C:\\",
-                  "VSS": "1" if self.vss.isChecked() else "0"})
+                  "VSS": "1" if self.vss.isChecked() else "0",
+                  "EINGERICHTET": "1" if self.feld["host"].text().strip() else "0"})
         try:
             p.datei_schreiben(p.EINSTELLUNGEN, w, "# PBS-Desk Einstellungen (pbs-settings)")
             p.datei_schreiben(p.CONF, self.server_conf(),
@@ -166,6 +185,10 @@ class EinstellungenDialog(QDialog):
             return
         if not aufgabe_planen(uz):
             QMessageBox.warning(self, p.PROGRAMM, _("Die Aufgabenplanung ließ sich nicht umstellen."))
+        n = p.naechster_termin(w)
+        QMessageBox.information(self, p.PROGRAMM, _(
+            "Gespeichert. Nächste geplante Sicherung: {zeit}.").format(zeit=p.zeit_text_kuenftig(n))
+            if n else _("Gespeichert."))
         self.accept()
 
 

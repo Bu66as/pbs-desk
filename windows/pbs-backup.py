@@ -46,6 +46,7 @@ ENGINE_ORDNER = os.path.join(p.DATEN, "engine")
 # aus der Dauer des letzten erfolgreichen Laufs (geschaetzt=true, der Tray schreibt
 # "ca."). Vor dem Ende nie ueber 99 %, der Balken laeuft nie rueckwaerts.
 FS_TAKT = 5
+RUHE_MESSPUNKTE = 6            # ~30 s Messung, bevor eine Restzeit angezeigt wird
 CHUNK_DATEI = re.compile(rb"^(?:New|Reuse) chunk\[[0-9a-f]+\] (\d+) bytes")
 CHUNK_IMAGE = re.compile(rb"^Chunk (\d+)/(\d+)/")
 IMAGE_CHUNK = 4 << 20          # pbsmachinebackup: feste 4-MiB-Chunks (.fidx)
@@ -92,6 +93,11 @@ class Fortschritt:
         self.faktor = 1.0
         if letzter.get("gezaehlt_bytes") and letzter.get("verarbeitet_bytes"):
             self.faktor = min(1.5, max(0.5, letzter["verarbeitet_bytes"] / letzter["gezaehlt_bytes"]))
+        self.rate = None          # geglaettete Bytes/s fuer die Restzeit
+        self.letzt = (self.start, 0)
+        self.messpunkte = 0
+        self.proc = None          # Engine-Prozess, fuer den Abbruch
+        self.abgebrochen = False
         self.fertig = threading.Event()
         if not self.image:
             threading.Thread(target=self._zaehlen, args=(quelle,), daemon=True).start()
@@ -114,6 +120,13 @@ class Fortschritt:
 
     def _takt(self):
         while True:
+            if os.path.exists(p.ABBRUCH) and not self.abgebrochen:
+                self.abgebrochen = True
+                if self.proc is not None:
+                    try:
+                        self.proc.kill()
+                    except OSError:
+                        pass
             self.messen()
             if self.fertig.wait(FS_TAKT):
                 return
@@ -127,7 +140,19 @@ class Fortschritt:
             gesamt = int(self.gezaehlt * self.faktor)
         if gesamt and verarbeitet > 0 and dauer > 0:
             prozent = verarbeitet * 100 // gesamt
-            rest = int(max(gesamt - verarbeitet, 0) * dauer / verarbeitet)
+            # Restzeit aus geglaetteter Rate (EMA ueber die Messpunkte); erst nach
+            # RUHE_MESSPUNKTE Messpunkten und 1 % anzeigen, vorher springt sie stark
+            jetzt = time.time()
+            dt, db = jetzt - self.letzt[0], verarbeitet - self.letzt[1]
+            if dt > 0 and db >= 0:
+                r = db / dt
+                self.rate = r if self.rate is None else 0.8 * self.rate + 0.2 * r
+                self.messpunkte += 1
+            self.letzt = (jetzt, verarbeitet)
+            mittel = verarbeitet / dauer
+            rate = max(self.rate or 0, mittel * 0.5)
+            if self.messpunkte >= RUHE_MESSPUNKTE and prozent >= 1 and rate > 0:
+                rest = int(max(gesamt - verarbeitet, 0) / rate)
         elif self.letzte_dauer:
             geschaetzt = True
             prozent = int(dauer * 100 / self.letzte_dauer)
@@ -229,7 +254,43 @@ def image_alter():
         return None
 
 
+def abbrechen():
+    """Aufgabe \\PBS-Desk\\Abbrechen (SYSTEM, vom Tray ausgeloest): laufende Sicherung beenden."""
+    lauf = p.laufender()
+    if not lauf:
+        return 0
+    with open(p.ABBRUCH, "w", encoding="utf-8") as f:
+        f.write(datetime.now().isoformat(timespec="seconds"))
+    log(f"[{lauf.get('ausloeser', '?')}] ABBRUCH angefordert")
+    for _ in range(60):
+        if not p.laufender():
+            return 0
+        time.sleep(0.5)
+    # Lauf reagiert nicht: Prozessbaum hart beenden und selbst aufraeumen
+    subprocess.run(["taskkill", "/T", "/F", "/PID", str(lauf["pid"])], capture_output=True,
+                   creationflags=subprocess.CREATE_NO_WINDOW)
+    for weg in (p.LAUF, p.FORTSCHRITT, p.FORTSCHRITT + ".tmp", p.ABBRUCH):
+        try:
+            os.remove(weg)
+        except OSError:
+            pass
+    p.verlauf_schreiben(lauf.get("art", "backup"), lauf.get("ausloeser", "hand"), "abgebrochen",
+                        grund="abgebrochen", meldung="Prozess beendet")
+    return 0
+
+
+def engine_grund(zeilen, verarbeitet):
+    """Grund eines Engine-Fehlers aus den letzten Ausgabezeilen."""
+    text = b"\n".join(zeilen).decode("utf-8", "replace")
+    g = p.fehler_grund(text)
+    if g == "unerreichbar" and verarbeitet:
+        return "verbindung_weg"
+    return g
+
+
 def main():
+    if "--abbrechen" in sys.argv:
+        return abbrechen()
     hand = "--hand" in sys.argv
     image = "--image" in sys.argv
     art = "image" if image else "backup"
@@ -268,8 +329,19 @@ def main():
             fehlt.append("pbsmachinebackup.exe")
     if fehlt:
         log(f"[{ausloeser}] FEHLER: in pbs-desk.conf fehlt {', '.join(fehlt)}")
-        p.verlauf_schreiben(art, ausloeser, "fehler", meldung="Konfiguration unvollständig")
+        p.verlauf_schreiben(art, ausloeser, "fehler", grund="konfiguration",
+                            meldung="Konfiguration unvollständig")
         return 2
+
+    # Vorpruefung mit klarer Ursache (Server weg, Fingerabdruck, Anmeldung), bevor die
+    # Engine mit ihren eigenen Meldungen startet
+    try:
+        p.Server(c).pruefen()
+    except Exception as e:  # noqa: BLE001
+        grund = p.fehler_grund(e)
+        log(f"[{ausloeser}] FEHLER vor dem Start ({grund}): {e}")
+        p.verlauf_schreiben(art, ausloeser, "fehler", grund=grund, meldung=str(e)[:200], dauer_s=0)
+        return 1
 
     # Das Token-Secret geht ueber eine JSON-Datei (-config) an die Engine, nie ueber die
     # Befehlszeile: die kann jeder lokale Prozess per Win32_Process.CommandLine lesen.
@@ -297,35 +369,52 @@ def main():
                    "ausloeser": ausloeser, "quelle": quelle, "art": art}, f)
     log(f"[{ausloeser}{'/image' if image else ''}] START {quelle} -> {c['PBS_REPOSITORY']} {c['PBS_DATASTORE']}"
         f"/{c.get('PBS_NAMESPACE', '')} id={backup_id} vss={w.get('VSS', '1')}")
+    for weg in (p.ABBRUCH,):
+        try:
+            os.remove(weg)
+        except OSError:
+            pass
     fs = Fortschritt(art, quelle)
+    letzte = []
     try:
         with open(p.LOG, "ab") as logf:
             # Geheimnis steht nur in der Engine-Konfiguration, nie in Befehlszeile oder Protokoll.
             # Ausgabe zeilenweise ins Protokoll und an die Fortschrittsmessung.
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
+            fs.proc = proc
+            if fs.abgebrochen:
+                proc.kill()
             for z in proc.stdout:
                 logf.write(z)
                 fs.zeile(z)
+                if not z.startswith((b"New chunk", b"Reuse chunk", b"Chunk ")):
+                    letzte = (letzte + [z.strip()])[-40:]
             rc = proc.wait()
     except OSError as e:
         log(f"[{ausloeser}] FEHLER: {e}")
         rc = -1
     finally:
         fs_werte = fs.ende()
-        for weg in (p.LAUF, konfig):
+        for weg in (p.LAUF, konfig, p.ABBRUCH):
             try:
                 os.remove(weg)
             except OSError:
                 pass
     dauer = int(time.time() - start)
     status = "ok" if rc == 0 else "fehler"
+    mehr = {}
+    if fs.abgebrochen:
+        status, mehr = "abgebrochen", {"grund": "abgebrochen"}
+    elif rc != 0:
+        mehr = {"grund": engine_grund(letzte, fs.bytes),
+                "meldung": (letzte[-1] if letzte else b"").decode("utf-8", "replace")[:200]}
     log(f"[{ausloeser}{'/image' if image else ''}] ENDE rc={rc} status={status} dauer={dauer}s "
         f"fortschritt_meldungen={fs_werte['fortschritt_meldungen']} max={fs_werte['fortschritt_max']}")
     p.verlauf_schreiben(art, ausloeser, status, dauer_s=dauer, rc=rc, quelle=quelle,
                         ziel=f"{c['PBS_REPOSITORY']}/{c['PBS_DATASTORE']}/{c.get('PBS_NAMESPACE', '')}",
-                        backup_id=backup_id, **fs_werte)
-    return 0 if rc == 0 else 1
+                        backup_id=backup_id, **fs_werte, **mehr)
+    return 0 if status == "ok" else 1
 
 
 if __name__ == "__main__":

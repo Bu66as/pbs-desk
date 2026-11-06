@@ -122,6 +122,10 @@ if (-not (Test-Path $einst)) {
         "UHRZEITEN=07:30,12:30,18:00", "ARBEITSZEIT_SKIP=1", "WORK_START=8", "WORK_END=17",
         "TAGESSPERRE=1", "QUELLE=C:\", "VSS=1", "STALE_DAYS=3")
 }
+# Vermerk fuer den Tray, der pbs-desk.conf nicht lesen darf: ist ein Server eingetragen?
+$eingerichtet = if ((Get-Content $conf -ErrorAction SilentlyContinue) -match "^PBS_REPOSITORY=\S") { "1" } else { "0" }
+$zeilen = @(Get-Content $einst | Where-Object { $_ -notlike "EINGERICHTET=*" }) + "EINGERICHTET=$eingerichtet"
+Set-Content -Encoding ASCII $einst $zeilen
 $uhrzeiten = ((Get-Content $einst | Where-Object { $_ -like "UHRZEITEN=*" }) -replace "^UHRZEITEN=", "")
 if (-not $uhrzeiten) { $uhrzeiten = "07:30,12:30,18:00" }
 
@@ -147,10 +151,16 @@ Register-ScheduledTask -Force -TaskPath "\PBS-Desk\" -TaskName "Image" -Principa
 Register-ScheduledTask -Force -TaskPath "\PBS-Desk\" -TaskName "Image-Hand" -Principal $prinzipal `
     -Settings $einstellung -Description "PBS-Desk: Disk-Image von Hand aus dem Tray" `
     -Action (New-ScheduledTaskAction -Execute $Py -Argument "$backup --image --hand" -WorkingDirectory "$Prog\app") | Out-Null
+# Abbrechen einer laufenden Sicherung aus dem Tray (der Lauf gehoert SYSTEM)
+Register-ScheduledTask -Force -TaskPath "\PBS-Desk\" -TaskName "Abbrechen" -Principal $prinzipal `
+    -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)) `
+    -Description "PBS-Desk: laufende Sicherung abbrechen (aus dem Tray)" `
+    -Action (New-ScheduledTaskAction -Execute $Py -Argument "$backup --abbrechen" -WorkingDirectory "$Prog\app") | Out-Null
 # Angemeldete Benutzer duerfen den Handstart ausloesen (wie die polkit-Regel unter Linux)
 $dienst = New-Object -ComObject "Schedule.Service"
 $dienst.Connect()
-foreach ($t in "Sicherung-Hand", "Image-Hand") {
+foreach ($t in "Sicherung-Hand", "Image-Hand", "Abbrechen") {
     $dienst.GetFolder("\PBS-Desk").GetTask($t).SetSecurityDescriptor(
         "O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;AU)", 0)
 }

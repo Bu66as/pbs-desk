@@ -133,3 +133,164 @@ msgstr "manual"
 
 msgid "geplant"
 msgstr "scheduled"
+
+# Bedienbarkeit 3 (W01–W15): Status in Klartext, Abbrechen, Verlauf, Fehlertexte, Felderklärungen
+
+msgid "Noch nicht eingerichtet – bitte „Einstellungen …“ öffnen"
+msgstr "Not set up yet – please open “Settings …”"
+
+msgid "Noch keine Sicherung"
+msgstr "No backup yet"
+
+msgid "Letzte Sicherung abgebrochen"
+msgstr "Last backup cancelled"
+
+msgid "Letzte Sicherung fehlgeschlagen ✗ – Verlauf ansehen"
+msgstr "Last backup failed ✗ – see History"
+
+msgid "Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte die Angaben vom Betreiber des Backup-Servers prüfen."
+msgstr "Login rejected: the API token or token secret is wrong. Please check the details you got from whoever runs the backup server."
+
+msgid "Der Server weist sich mit einem anderen Fingerabdruck aus als eingetragen. Auf „Vom Server holen“ klicken und mit dem Wert vergleichen, den Ihnen der Betreiber genannt hat."
+msgstr "The server presents a different fingerprint than the one entered. Click “Get from server” and compare it with the value the server operator gave you."
+
+msgid "Der Backup-Server ist nicht erreichbar. Netzwerkverbindung und Serveradresse prüfen, später erneut versuchen."
+msgstr "The backup server can't be reached. Check the network connection and the server address, then try again later."
+
+msgid "Die Verbindung zum Backup-Server ist während der Sicherung abgebrochen. Der nächste Lauf startet automatisch."
+msgstr "The connection to the backup server dropped during the backup. The next run starts automatically."
+
+msgid "Von Hand abgebrochen. Die Sicherung ist unvollständig."
+msgstr "Cancelled by hand. The backup is incomplete."
+
+msgid "Die Verbindung zum Backup-Server ist nicht vollständig eingerichtet."
+msgstr "The connection to the backup server is not fully set up."
+
+msgid "Die Sicherung ist fehlgeschlagen. Einzelheiten stehen im technischen Protokoll."
+msgstr "The backup failed. Details are in the technical log."
+
+msgid "Letzte Sicherung: {zeit} ✓"
+msgstr "Last backup: {zeit} ✓"
+
+msgid "heute {uhr}"
+msgstr "today {uhr}"
+
+msgid "gestern {uhr}"
+msgstr "yesterday {uhr}"
+
+msgid "%d.%m."
+msgstr "%b %d"
+
+msgid "morgen {uhr}"
+msgstr "tomorrow {uhr}"
+
+msgid "Die erste Sicherung läuft noch. Wiederherstellen geht, sobald sie fertig ist."
+msgstr "The first backup is still running. You can restore files once it has finished."
+
+msgid "Nur einmal am Tag automatisch sichern"
+msgstr "Back up automatically only once a day"
+
+msgid "Ist heute schon eine Sicherung gelungen, fallen die weiteren geplanten Zeiten dieses Tages aus."
+msgstr "Once a backup has succeeded today, the remaining scheduled times for the day are skipped."
+
+msgid "z. B. C:\\ oder C:\\Users"
+msgstr "e.g. C:\\ or C:\\Users"
+
+msgid "Was gesichert wird. Die erste Sicherung überträgt alles und kann Stunden dauern, danach nur noch Änderungen."
+msgstr "What gets backed up. The first backup copies everything and can take hours; after that only changes are sent."
+
+msgid "„Backup jetzt starten …“ im Menü sichert immer, auch in der Arbeitszeit und mehrmals am Tag."
+msgstr "“Back up now …” in the menu always runs, even during working hours and more than once a day."
+
+msgid "Adresse des Backup-Servers"
+msgstr "Address of the backup server"
+
+msgid "z. B. backup.example.org"
+msgstr "e.g. backup.example.org"
+
+msgid "Speicherbereich auf dem Backup-Server"
+msgstr "Storage area on the backup server"
+
+msgid "z. B. backup"
+msgstr "e.g. backup"
+
+msgid "Unterordner im Speicherbereich, meist für dieses Gerät"
+msgstr "Subfolder in the storage area, usually one per device"
+
+msgid "z. B. buero/pc1 (optional)"
+msgstr "e.g. office/pc1 (optional)"
+
+msgid "Benutzername für die Sicherung, Form benutzer@realm!name"
+msgstr "User name for backups, in the form user@realm!name"
+
+msgid "z. B. sicherung@pbs!pc1"
+msgstr "e.g. backup@pbs!pc1"
+
+msgid "Passwort zum Token"
+msgstr "Password for the token"
+
+msgid "Name, unter dem dieses Gerät gesichert wird"
+msgstr "Name this device is backed up under"
+
+msgid "Kennung des Servers, schützt vor Verwechslung"
+msgstr "Identifies the server, so you don't connect to the wrong one"
+
+msgid "z. B. 88:b9:4c:…"
+msgstr "e.g. 88:b9:4c:…"
+
+msgid "Gespeichert. Nächste geplante Sicherung: {zeit}."
+msgstr "Saved. Next scheduled backup: {zeit}."
+
+msgid "Sicherung wird abgeschlossen …"
+msgstr "Finishing the backup …"
+
+msgid "PBS-Desk sichert diesen Rechner. Das Symbol unten rechts in der Taskleiste zeigt den Stand, ein Rechtsklick öffnet das Menü."
+msgstr "PBS-Desk backs up this computer. The icon at the bottom right of the taskbar shows the status; right-click it to open the menu."
+
+msgid "Technisches Protokoll …"
+msgstr "Technical log …"
+
+msgid "Laufende Sicherung abbrechen? Bereits gesicherte Daten bleiben auf dem Server, die Sicherung ist dann aber unvollständig."
+msgstr "Cancel the running backup? Data already sent stays on the server, but the backup will be incomplete."
+
+msgid "Image der ganzen Systemplatte jetzt sichern?\n\nGedacht vor riskanten Änderungen (Treiber, Updates). Das dauert länger als ein normales Backup."
+msgstr "Back up an image of the whole system disk now?\n\nMeant for before risky changes (drivers, updates). It takes longer than a normal backup."
+
+msgid "Datum"
+msgstr "Date"
+
+msgid "Grund"
+msgstr "Reason"
+
+msgid "Wird nach der Sicherung heruntergefahren."
+msgstr "Will shut down after the backup."
+
+msgid "{programm} – Verlauf"
+msgstr "{programm} – History"
+
+msgid "(Image)"
+msgstr "(image)"
+
+msgid "(von Hand)"
+msgstr "(manual)"
+
+msgid "Noch keine Sicherung gelaufen."
+msgstr "No backup has run yet."
+
+msgid "Verlauf …"
+msgstr "History …"
+
+msgid "✓ erfolgreich"
+msgstr "✓ succeeded"
+
+msgid "✗ fehlgeschlagen"
+msgstr "✗ failed"
+
+msgid "Letzter Erfolg: {zeit}"
+msgstr "Last success: {zeit}"
+
+msgid "Sicherung abbrechen"
+msgstr "Cancel backup"
+
+msgid "Image jetzt sichern …"
+msgstr "Back up image now …"

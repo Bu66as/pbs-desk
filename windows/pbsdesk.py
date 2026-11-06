@@ -40,6 +40,9 @@ LAUF = os.path.join(DATEN, "laeuft.json")
 LOG = os.path.join(DATEN, "backup.log")
 # Fortschritt des laufenden Backups, von pbs-backup.py geschrieben, vom Tray gelesen
 FORTSCHRITT = os.path.join(DATEN, "fortschritt.json")
+# Abbruchwunsch: legt pbs-backup.py --abbrechen (Aufgabe \PBS-Desk\Abbrechen) an
+ABBRUCH = os.path.join(DATEN, "abbrechen")
+AUFGABE_ABBRECHEN = r"\PBS-Desk\Abbrechen"
 AUFGABE = r"\PBS-Desk\Sicherung"
 AUFGABE_HAND = r"\PBS-Desk\Sicherung-Hand"
 AUFGABE_IMAGE = r"\PBS-Desk\Image"
@@ -207,6 +210,128 @@ def letzte_logzeile():
         return None
 
 
+def eingerichtet():
+    """Ist ein Backup-Server eingetragen? Der Tray darf pbs-desk.conf nicht lesen,
+    deshalb vermerken Setup und Einstellungen das in einstellungen.conf (EINGERICHTET).
+    Fehlt der Vermerk (aeltere Installation), gilt die Einrichtung als vorhanden."""
+    return datei_werte(EINSTELLUNGEN).get("EINGERICHTET", "1") != "0"
+
+
+def zeit_text(d):
+    """'heute 14:02', 'gestern 09:10' oder '03.11. 18:00'."""
+    tage = (date.today() - d.date()).days
+    uhr = d.strftime("%H:%M")
+    if tage == 0:
+        return _("heute {uhr}").format(uhr=uhr)
+    if tage == 1:
+        return _("gestern {uhr}").format(uhr=uhr)
+    return d.strftime(_("%d.%m.")) + " " + uhr
+
+
+def zeit_text_kuenftig(d):
+    """'heute 18:00', 'morgen 07:30' oder '09.11. 07:30'."""
+    tage = (d.date() - date.today()).days
+    uhr = d.strftime("%H:%M")
+    if tage == 0:
+        return _("heute {uhr}").format(uhr=uhr)
+    if tage == 1:
+        return _("morgen {uhr}").format(uhr=uhr)
+    return d.strftime(_("%d.%m.")) + " " + uhr
+
+
+def letzter_lauf(art="backup"):
+    return next((e for e in reversed(verlauf()) if e.get("art") == art
+                 and e.get("status") in ("ok", "fehler", "abgebrochen")), None)
+
+
+def status_zeile():
+    """Erste Zeile von Tray-Menue und Tooltip in Klartext (ohne laufende Sicherung)."""
+    if not eingerichtet():
+        return _("Noch nicht eingerichtet – bitte „Einstellungen …“ öffnen")
+    e = letzter_lauf()
+    if e is None:
+        return _("Noch keine Sicherung")
+    if e.get("status") == "abgebrochen":
+        return _("Letzte Sicherung abgebrochen")
+    if e.get("status") == "fehler":
+        return _("Letzte Sicherung fehlgeschlagen ✗ – Verlauf ansehen")
+    try:
+        d = datetime.fromisoformat(e["zeit"]).replace(tzinfo=None)
+    except (KeyError, ValueError):
+        return _("Noch keine Sicherung")
+    return _("Letzte Sicherung: {zeit} ✓").format(zeit=zeit_text(d))
+
+
+def naechster_termin(w=None, jetzt=None):
+    """Naechste geplante Uhrzeit als datetime (ohne Sperren) oder None."""
+    from datetime import timedelta
+    w = w or einstellungen()
+    jetzt = jetzt or datetime.now()
+    kandidaten = []
+    for t in w.get("UHRZEITEN", "").split(","):
+        try:
+            h, m = (int(x) for x in t.strip().split(":"))
+        except ValueError:
+            continue
+        for tag in range(0, 3):
+            d = (jetzt + timedelta(days=tag)).replace(hour=h, minute=m, second=0, microsecond=0)
+            if d > jetzt:
+                kandidaten.append(d)
+                break
+    return min(kandidaten) if kandidaten else None
+
+
+# Klartext fuer Fehlergruende (gleiche Texte wie unter Linux)
+GRUENDE = {
+    "anmeldung": lambda: _("Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. "
+                           "Bitte die Angaben vom Betreiber des Backup-Servers prüfen."),
+    "fingerabdruck": lambda: _("Der Server weist sich mit einem anderen Fingerabdruck aus als "
+                               "eingetragen. Auf „Vom Server holen“ klicken und mit dem Wert "
+                               "vergleichen, den Ihnen der Betreiber genannt hat."),
+    "unerreichbar": lambda: _("Der Backup-Server ist nicht erreichbar. Netzwerkverbindung und "
+                              "Serveradresse prüfen, später erneut versuchen."),
+    "verbindung_weg": lambda: _("Die Verbindung zum Backup-Server ist während der Sicherung "
+                                "abgebrochen. Der nächste Lauf startet automatisch."),
+    "abgebrochen": lambda: _("Von Hand abgebrochen. Die Sicherung ist unvollständig."),
+    "konfiguration": lambda: _("Die Verbindung zum Backup-Server ist nicht vollständig eingerichtet."),
+    "sonstiges": lambda: _("Die Sicherung ist fehlgeschlagen. Einzelheiten stehen im technischen Protokoll."),
+}
+
+
+def grund_text(grund):
+    return GRUENDE.get(grund, GRUENDE["sonstiges"])()
+
+
+def fehler_grund(fehler):
+    """Ordnet eine Ausnahme oder einen Engine-Text einem Grund aus GRUENDE zu."""
+    t = str(fehler).lower()
+    if isinstance(fehler, FingerabdruckFehler) or "fingerprint" in t or "fingerabdruck" in t \
+            or "x509" in t or "certificate" in t:
+        return "fingerabdruck"
+    if isinstance(fehler, AnmeldungFehler) or "401" in t or "unauthorized" in t \
+            or "authentication fail" in t or "permission check failed" in t or "403" in t:
+        return "anmeldung"
+    if isinstance(fehler, (socket.timeout, TimeoutError, ConnectionError, socket.gaierror)) \
+            or any(w in t for w in ("timed out", "timeout", "refused", "unreachable", "no route",
+                                    "dial tcp", "connectex", "getaddrinfo", "no such host",
+                                    "nicht erreichbar", "wsarecv", "wsasend", "forcibly closed",
+                                    "connection reset", "broken pipe", "eof", "connection lost")):
+        return "unerreichbar"
+    return "sonstiges"
+
+
+def klartext(fehler):
+    return grund_text(fehler_grund(fehler))
+
+
+class FingerabdruckFehler(ssl.SSLError):
+    pass
+
+
+class AnmeldungFehler(OSError):
+    pass
+
+
 # --- Backup-Server -----------------------------------------------------------
 def fp_norm(fp):
     return fp.replace(":", "").strip().lower()
@@ -245,7 +370,7 @@ class Server:
         echt = hashlib.sha256(v.sock.getpeercert(binary_form=True)).hexdigest()
         if self.fp and echt != self.fp:
             v.close()
-            raise ssl.SSLError(_("Fingerabdruck des Servers stimmt nicht."))
+            raise FingerabdruckFehler(_("Fingerabdruck des Servers stimmt nicht."))
         return v
 
     def anfrage(self, pfad, **params):
@@ -259,14 +384,38 @@ class Server:
         v, r = self.anfrage(pfad, **params)
         try:
             roh = r.read()
+            if r.status in (401, 403):
+                raise AnmeldungFehler(f"HTTP {r.status}")
             if r.status != 200:
                 raise OSError(f"HTTP {r.status}: {roh[:200].decode('utf-8', 'replace')}")
             return json.loads(roh)["data"]
         finally:
             v.close()
 
-    def snapshots(self):
+    def pruefen(self, timeout=15):
+        """Erreichbarkeit, Fingerabdruck und Anmeldung pruefen (wirft bei Fehler)."""
+        v = self._verbindung(timeout=timeout)
+        try:
+            v.request("GET", f"/api2/json/admin/datastore/{self.store}/groups?"
+                      + urllib.parse.urlencode({"ns": self.ns} if self.ns else {}),
+                      headers={"Authorization": self.auth})
+            r = v.getresponse()
+            r.read()
+            if r.status in (401, 403):
+                raise AnmeldungFehler(f"HTTP {r.status}")
+            if r.status != 200:
+                raise OSError(f"HTTP {r.status}")
+        finally:
+            v.close()
+
+    def snapshots(self, nur_fertige=False):
         s = self.json("snapshots", ns=self.ns)
+        if nur_fertige:
+            # Laufende Sicherungen stehen schon in der Liste, haben aber noch keinen
+            # Katalog: deren Katalogabfrage scheitert
+            s = [x for x in s if any(f.get("filename", "").startswith("catalog.")
+                                     for f in x.get("files", []))
+                 and any(f.get("filename", "").endswith(".pxar.didx") for f in x.get("files", []))]
         return sorted(s, key=lambda x: x.get("backup-time", 0), reverse=True)
 
     def katalog(self, snap, pfad):

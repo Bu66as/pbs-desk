@@ -63,7 +63,7 @@ def protokollieren(status, pfad, ziel, snap=None, fehler=None):
 
 def cli(args):
     server = p.Server()
-    snaps = server.snapshots()
+    snaps = server.snapshots(nur_fertige=True)
     if "--liste" in args:
         for i, s in enumerate(snaps):
             print(i, snap_text(s), " ".join(f["filename"] for f in s.get("files", [])))
@@ -93,14 +93,22 @@ def gui():
     if not p.ist_admin():
         QMessageBox.warning(None, p.PROGRAMM, _("Abgebrochen: keine Administratorrechte."))
         return 1
+    # Waehrend der ersten Sicherung stand deren unfertiger Snapshot in der
+    # Liste; die Katalogabfrage scheiterte und die Fehlermeldung hing unsichtbar vor dem
+    # Fenster. Jetzt nur fertige Sicherungen, und das Fenster erscheint vor dem Laden.
+    app.setOverrideCursor(Qt.CursorShape.WaitCursor)
     try:
         server = p.Server()
-        snaps = server.snapshots()
+        snaps = server.snapshots(nur_fertige=True)
     except Exception as e:
-        QMessageBox.warning(None, p.PROGRAMM, _("Verbindung fehlgeschlagen: {fehler}").format(fehler=e))
+        app.restoreOverrideCursor()
+        QMessageBox.warning(None, p.PROGRAMM, p.klartext(e))
         return 1
+    app.restoreOverrideCursor()
     if not snaps:
-        QMessageBox.information(None, p.PROGRAMM, _("Noch keine Sicherung auf dem Server."))
+        QMessageBox.information(None, p.PROGRAMM, _(
+            "Die erste Sicherung läuft noch. Wiederherstellen geht, sobald sie fertig ist.")
+            if p.laufender() else _("Noch keine Sicherung auf dem Server."))
         return 1
 
     PFAD, ORDNER = Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1
@@ -146,7 +154,7 @@ def gui():
         try:
             eintraege = server.katalog(snap, pfad)
         except Exception as e:
-            QMessageBox.warning(dlg, p.PROGRAMM, _("Katalog nicht lesbar: {fehler}").format(fehler=e))
+            QMessageBox.warning(dlg, p.PROGRAMM, _("Katalog nicht lesbar: {fehler}").format(fehler=p.klartext(e)))
             return
         for e in sorted(eintraege, key=lambda x: (x.get("leaf", True), x.get("text", "").lower())):
             it = QTreeWidgetItem([e.get("text", "?")])
@@ -177,7 +185,7 @@ def gui():
         except Exception as e:
             app.restoreOverrideCursor()
             protokollieren("fehler", pfad, ziel.text(), snap, e)
-            QMessageBox.warning(dlg, p.PROGRAMM, _("Wiederherstellen fehlgeschlagen: {fehler}").format(fehler=e))
+            QMessageBox.warning(dlg, p.PROGRAMM, _("Wiederherstellen fehlgeschlagen: {fehler}").format(fehler=p.klartext(e)))
             return
         app.restoreOverrideCursor()
         protokollieren("ok", pfad, ziel.text(), snap)
@@ -186,7 +194,8 @@ def gui():
     baum.itemExpanded.connect(aufklappen)
     auswahl.currentIndexChanged.connect(neu)
     los.clicked.connect(wiederherstellen)
-    neu()
+    from PySide6.QtCore import QTimer
+    QTimer.singleShot(0, neu)
     return 0 if dlg.exec() else 0
 
 
