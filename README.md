@@ -15,7 +15,7 @@ EU, den USA und anderen Ländern.
 
 Frühe Version. Im Alltag läuft pbs-desk seit Wochen auf mehreren Linux-Notebooks
 (Fedora, KDE Plasma). Andere Distributionen und Desktops sind kaum erprobt.
-Pakete (RPM/DEB) gibt es noch nicht, installiert wird per `install.sh`.
+Pakete (RPM/DEB) gibt es noch nicht, installiert wird unter Linux per `install.sh`, unter Windows per Setup.exe.
 
 ## Installation
 
@@ -65,33 +65,65 @@ wird nach `LANGUAGE`/`LANG` (Deutsch bei `de*`, sonst Englisch). Das Protokoll
 - Wiederherstellen: Sicherungen auflisten, ein Archiv schreibgeschützt einhängen
   und im Dateimanager öffnen; dazu der Verlauf der Backup-Läufe
 
-## Windows
+## Installation unter Windows
 
-Eine Windows-Fassung liegt in `windows/`. Sie hat denselben Tray, dasselbe
-Einstellungsfenster und denselben Wiederherstellen-Dialog (PySide6) und führt die
-Sicherungen als geplante Aufgaben unter SYSTEM aus.
+Voraussetzung: Windows 10 oder 11, 64 Bit, ein Konto mit Administratorrechten.
+Python und alles Weitere bringt die Setup-Datei mit, beim Installieren ist
+kein Internet nötig.
 
-Installation aus dem entpackten Repo in einer PowerShell als Administrator:
+1. Die Setup.exe herunterladen (`PBS-Desk-Setup-<Version>.exe`). Solange es noch keinen Release
+   gibt, liefert der Workflow „Windows setup“ (Actions) die Datei als Artefakt;
+   man kann sie auch selbst bauen (`windows\installer\build.ps1`, braucht
+   Inno Setup 6).
+2. Doppelklick auf die Datei. Die Programme sind nicht signiert, deshalb zeigt
+   Windows SmartScreen die Meldung „Der Computer wurde durch Windows geschützt“.
+   Auf **Weitere Informationen** und dann auf **Trotzdem ausführen** klicken.
+3. Der Assistent fragt nach der Sprache und zeigt die Lizenz. Auf der Seite
+   „Backup-Server“ kommen Server, Port, Datenspeicher, Namespace, Backup-ID und
+   API-Token hinein. „Vom Server holen“ ruft den Fingerabdruck ab. Das Token
+   braucht auf dem Datenspeicher bzw. Namespace die Rolle `DatastoreBackup`.
+4. Nach der Installation steht PBS-Desk unter „Apps“ > „Installierte Apps“
+   (früher „Apps & Features“). Das Tray-Symbol liegt zunächst im Überlauf (`^`)
+   der Taskleiste. Die Sicherung läuft als Aufgabe `\PBS-Desk\Sicherung`
+   (morgens, mittags und abends) und das Disk-Image alle vier Wochen.
+
+Programme liegen unter `C:\Program Files\PBS-Desk`, Einstellungen, Verlauf und
+Zugangsdaten unter `C:\ProgramData\PBS-Desk`.
+
+**Stille Installation** (z.B. per Software-Verteilung):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File windows\install.ps1
+PBS-Desk-Setup-<Version>.exe /VERYSILENT /SUPPRESSMSGBOXES /CONFIG=C:\pfad\pbs-desk.conf
 ```
 
-Das Skript richtet ein eigenes Python mit PySide6 unter `C:\Program Files\PBS-Desk`
-ein, dazu die Aufgaben, den Tray-Autostart und den Datenordner
-`C:\ProgramData\PBS-Desk`. Danach unter Einstellungen Server, Datenspeicher und
-API-Token eintragen.
+`/CONFIG` ist optional und übernimmt eine vorbereitete `pbs-desk.conf`, aber nur,
+wenn noch keine Konfiguration existiert. Eine vorhandene Konfiguration bleibt
+bei jeder Installation unverändert. Das Token steht nie auf der Befehlszeile
+und nie im Setup-Protokoll.
 
-Die Sicherung selbst übernehmen zwei Engines, die nicht Teil dieses Repos sind.
-Sie gehören nach `C:\Program Files\PBS-Desk\bin`:
+**Deinstallation:** „Installierte Apps“ > PBS-Desk > Deinstallieren, oder still
+mit `"C:\Program Files\PBS-Desk\unins000.exe" /VERYSILENT`. Das Programm
+entfernt Aufgaben, Autostart und Programmordner. Den Ordner
+`C:\ProgramData\PBS-Desk` löscht es nur nach Rückfrage (Vorgabe: behalten);
+bei der stillen Deinstallation bleibt er immer erhalten.
 
-- `proxmoxbackup-directory.exe`: Datei-Backup von `C:\` aus einer VSS-Schattenkopie (täglich).
-- `pbsmachinebackup.exe`: Disk-Image der Systemplatte (alle 4 Wochen oder per Tray).
-  Das Zurückspielen auf eine neue SSD steht in `windows/IMAGE.md`.
+**Engine und Lizenz:** Gesichert wird mit `pbsdirectorybackup.exe` (Dateien,
+mit VSS) und `pbsmachinebackup.exe` (Disk-Image) aus
+[tizbac/proxmoxbackupclient_go](https://github.com/tizbac/proxmoxbackupclient_go),
+Version v1.1.3, Lizenz GPL-3.0. Beide liegen unverändert in der Setup-Datei,
+nur `pbsdirectorybackup.exe` heißt dort `proxmoxbackup-directory.exe`. Der
+Build lädt das Release und prüft es gegen `checksums.txt`. Den Quellcode dieser
+Fassung gibt es unter dem Tag
+[v1.1.3](https://github.com/tizbac/proxmoxbackupclient_go/tree/v1.1.3), die
+Lizenz liegt mit im Programmordner. Details: `windows/installer/THIRD-PARTY.md`.
 
-Das Datei-Backup sichert keine NTFS-ACLs, alternativen Datenströme (ADS),
-Dateiattribute und Hardlinks, nur Inhalt, Namen und Verzeichnisstruktur. Wer
-sie braucht oder nach einem Plattenausfall ein startfähiges System will, nimmt das Disk-Image.
+**Grenzen des Datei-Backups:** Es sichert keine NTFS-ACLs, alternativen
+Datenströme (ADS), Dateiattribute und Hardlinks, nur Inhalt, Namen und
+Verzeichnisstruktur. Wer sie braucht oder nach einem Plattenausfall ein
+startfähiges System will, nimmt das Disk-Image (`windows/IMAGE.md` erklärt das
+Zurückspielen auf eine neue SSD). Ohne Setup.exe geht es auch aus dem
+entpackten Repo: `powershell -ExecutionPolicy Bypass -File windows\install.ps1`
+als Administrator.
 
 ## Aufbau
 

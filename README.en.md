@@ -15,7 +15,7 @@ other countries.
 
 Early release. pbs-desk has been in daily use for weeks on several Linux
 notebooks (Fedora, KDE Plasma). Other distributions and desktops have seen
-little testing. There are no RPM/DEB packages yet; install with `install.sh`.
+little testing. There are no RPM/DEB packages yet; install with `install.sh` on Linux or the Setup.exe on Windows.
 
 ## Installation
 
@@ -64,31 +64,65 @@ chosen from `LANGUAGE`/`LANG` (German for `de*`, English otherwise). The log
 - Restore: list backups, mount an archive read-only and open it in the file
   manager; plus a history of backup runs
 
-## Windows
+## Installing on Windows
 
-A Windows version lives in `windows/`. It has the same tray, settings window and
-restore dialog (PySide6) and runs the backups as scheduled tasks under SYSTEM.
+You need Windows 10 or 11 (64-bit) and an account with administrator rights.
+The installer includes Python and everything else it needs, so no internet
+connection is required during setup.
 
-Install from the unpacked repo in an administrator PowerShell:
+1. Download the installer, `PBS-Desk-Setup-<version>.exe` (the "Setup.exe"). Until there is a release, the
+   "Windows setup" workflow (Actions) provides the file as an artifact. You can
+   also build it yourself with `windows\installer\build.ps1` (needs Inno Setup 6).
+2. Double-click the file. The programs are not code-signed, so Windows
+   SmartScreen shows "Windows protected your PC". Click "More info", then
+   "Run anyway".
+3. The wizard asks for a language and shows the license. On the "Backup server"
+   page, enter server, port, datastore, namespace, backup ID and API token.
+   "Fetch from server" retrieves the fingerprint. The token needs the
+   `DatastoreBackup` role on the datastore or namespace.
+4. Afterwards PBS-Desk is listed under Settings > Apps > Installed apps
+   (formerly "Apps & Features"). The tray icon first appears in the overflow
+   area (`^`) of the taskbar. File backups run as the scheduled task
+   `\PBS-Desk\Sicherung` (morning, noon and evening), and the disk image every
+   four weeks.
+
+Programs go to `C:\Program Files\PBS-Desk`; settings, history and credentials
+go to `C:\ProgramData\PBS-Desk`.
+
+Silent installation (for example from a software distribution tool):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File windows\install.ps1
+PBS-Desk-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /CONFIG=C:\path\pbs-desk.conf
 ```
 
-The script sets up a private Python with PySide6 under `C:\Program Files\PBS-Desk`,
-the tasks, the tray autostart and the data folder `C:\ProgramData\PBS-Desk`.
-Then enter server, datastore and API token under Settings.
+`/CONFIG` is optional. It copies a prepared `pbs-desk.conf`, but only if no
+configuration exists yet. An existing configuration is never changed by the
+installer. The token never appears on a command line or in the setup log.
 
-The backup itself is done by two engines that are not part of this repo. Put them
-in `C:\Program Files\PBS-Desk\bin`:
+Uninstalling: Installed apps > PBS-Desk > Uninstall, or silently with
+`"C:\Program Files\PBS-Desk\unins000.exe" /VERYSILENT`. This removes the
+scheduled tasks, the autostart entry and the program folder. It deletes
+`C:\ProgramData\PBS-Desk` only if you say yes (the default is to keep it), and
+a silent uninstall always keeps it.
 
-- `proxmoxbackup-directory.exe`: file backup of `C:\` from a VSS shadow copy (daily).
-- `pbsmachinebackup.exe`: disk image of the system drive (every 4 weeks, or from the
-  tray). `windows/IMAGE.md` (in German) covers restoring an image onto a new SSD.
+Engine and license: backups are made by `pbsdirectorybackup.exe` (files, using
+VSS) and `pbsmachinebackup.exe` (disk image) from
+[tizbac/proxmoxbackupclient_go](https://github.com/tizbac/proxmoxbackupclient_go),
+version v1.1.3, GPL-3.0. Both are included unmodified; only
+`pbsdirectorybackup.exe` is renamed to `proxmoxbackup-directory.exe`. The build
+downloads the release and checks it against `checksums.txt`. The source for this
+version is the tag
+[v1.1.3](https://github.com/tizbac/proxmoxbackupclient_go/tree/v1.1.3), and the
+license text is installed next to the programs. See
+`windows/installer/THIRD-PARTY.md` for details.
 
-The file backup does not keep NTFS ACLs, alternate data streams (ADS), file
-attributes or hardlinks, only content, names and folder structure. Use the disk
-image if you need those, or a bootable system after a disk failure.
+Limits of the file backup: it does not keep NTFS ACLs, alternate data streams
+(ADS), file attributes or hardlinks, only content, names and folder structure.
+Use the disk image if you need those, or a bootable system after a disk failure
+(`windows/IMAGE.md`, in German, covers restoring an image onto a new SSD).
+Without the installer you can also run
+`powershell -ExecutionPolicy Bypass -File windows\install.ps1` as administrator
+from the unpacked repo.
 
 ## Layout
 
