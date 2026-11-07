@@ -252,7 +252,7 @@ def status_zeile():
     if e is None:
         return _("Noch keine Sicherung")
     if e.get("status") == "abgebrochen":
-        return _("Letzte Sicherung abgebrochen")
+        return _("Letzte Sicherung: Abgebrochen ✗")
     if e.get("status") == "fehler":
         return _("Letzte Sicherung fehlgeschlagen ✗ – Verlauf ansehen")
     try:
@@ -284,12 +284,12 @@ def naechster_termin(w=None, jetzt=None):
 # Klartext fuer Fehlergruende (gleiche Texte wie unter Linux)
 GRUENDE = {
     "anmeldung": lambda: _("Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. "
-                           "Bitte die Angaben vom Betreiber des Backup-Servers prüfen."),
-    "fingerabdruck": lambda: _("Der Server weist sich mit einem anderen Fingerabdruck aus als "
-                               "eingetragen. Auf „Vom Server holen“ klicken und mit dem Wert "
-                               "vergleichen, den Ihnen der Betreiber genannt hat."),
-    "unerreichbar": lambda: _("Der Backup-Server ist nicht erreichbar. Netzwerkverbindung und "
-                              "Serveradresse prüfen, später erneut versuchen."),
+                           "Bitte beide Felder prüfen."),
+    "fingerabdruck": lambda: _("Der Server meldet einen anderen Fingerabdruck als eingetragen. "
+                               "Mit „Vom Server holen“ neu abrufen und mit dem Dashboard "
+                               "vergleichen."),
+    "unerreichbar": lambda: _("Server nicht erreichbar. Bitte Netzwerkverbindung und "
+                              "Serveradresse prüfen."),
     "verbindung_weg": lambda: _("Die Verbindung zum Backup-Server ist während der Sicherung "
                                 "abgebrochen. Der nächste Lauf startet automatisch."),
     "abgebrochen": lambda: _("Von Hand abgebrochen. Die Sicherung ist unvollständig."),

@@ -142,20 +142,20 @@ msgstr "Not set up yet – please open “Settings …”"
 msgid "Noch keine Sicherung"
 msgstr "No backup yet"
 
-msgid "Letzte Sicherung abgebrochen"
-msgstr "Last backup cancelled"
+msgid "Letzte Sicherung: Abgebrochen ✗"
+msgstr "Last backup: Cancelled ✗"
 
 msgid "Letzte Sicherung fehlgeschlagen ✗ – Verlauf ansehen"
 msgstr "Last backup failed ✗ – see History"
 
-msgid "Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte die Angaben vom Betreiber des Backup-Servers prüfen."
-msgstr "Login rejected: the API token or token secret is wrong. Please check the details you got from whoever runs the backup server."
+msgid "Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte beide Felder prüfen."
+msgstr "Login rejected: the API token or the token secret is wrong. Please check both fields."
 
-msgid "Der Server weist sich mit einem anderen Fingerabdruck aus als eingetragen. Auf „Vom Server holen“ klicken und mit dem Wert vergleichen, den Ihnen der Betreiber genannt hat."
-msgstr "The server presents a different fingerprint than the one entered. Click “Get from server” and compare it with the value the server operator gave you."
+msgid "Der Server meldet einen anderen Fingerabdruck als eingetragen. Mit „Vom Server holen“ neu abrufen und mit dem Dashboard vergleichen."
+msgstr "The server reports a different fingerprint than the one entered. Fetch it again with “Get from server” and compare it with the dashboard."
 
-msgid "Der Backup-Server ist nicht erreichbar. Netzwerkverbindung und Serveradresse prüfen, später erneut versuchen."
-msgstr "The backup server can't be reached. Check the network connection and the server address, then try again later."
+msgid "Server nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen."
+msgstr "Can't reach the server. Check your network connection and the server address."
 
 msgid "Die Verbindung zum Backup-Server ist während der Sicherung abgebrochen. Der nächste Lauf startet automatisch."
 msgstr "The connection to the backup server dropped during the backup. The next run starts automatically."
@@ -250,8 +250,8 @@ msgstr "PBS-Desk backs up this computer. The icon at the bottom right of the tas
 msgid "Technisches Protokoll …"
 msgstr "Technical log …"
 
-msgid "Laufende Sicherung abbrechen? Bereits gesicherte Daten bleiben auf dem Server, die Sicherung ist dann aber unvollständig."
-msgstr "Cancel the running backup? Data already sent stays on the server, but the backup will be incomplete."
+msgid "Laufende Sicherung wirklich abbrechen? Bereits gesicherte Daten bleiben erhalten, die nächste Sicherung startet normal."
+msgstr "Really cancel the running backup? Data already backed up is kept, and the next backup will run as usual."
 
 msgid "Image der ganzen Systemplatte jetzt sichern?\n\nGedacht vor riskanten Änderungen (Treiber, Updates). Das dauert länger als ein normales Backup."
 msgstr "Back up an image of the whole system disk now?\n\nMeant for before risky changes (drivers, updates). It takes longer than a normal backup."

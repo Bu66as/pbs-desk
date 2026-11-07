@@ -251,8 +251,8 @@ class Tray(QSystemTrayIcon):
 
     def abbrechen(self):
         if QMessageBox.question(None, p.PROGRAMM, _(
-                "Laufende Sicherung abbrechen? Bereits gesicherte Daten bleiben auf dem Server, "
-                "die Sicherung ist dann aber unvollständig.")) != QMessageBox.StandardButton.Yes:
+                "Laufende Sicherung wirklich abbrechen? Bereits gesicherte Daten bleiben erhalten, "
+                "die nächste Sicherung startet normal.")) != QMessageBox.StandardButton.Yes:
             return
         self._abschalten = None
         self.lauf_anstossen(p.AUFGABE_ABBRECHEN)

@@ -156,7 +156,10 @@ class EinstellungenDialog(QDialog):
         try:
             n = len(p.Server(self.server_conf()).snapshots())
         except Exception as e:
-            QMessageBox.warning(self, p.PROGRAMM, p.klartext(e))
+            box = QMessageBox(QMessageBox.Icon.Warning, p.PROGRAMM, p.klartext(e),
+                              QMessageBox.StandardButton.Ok, self)
+            box.setDetailedText(str(e))
+            box.exec()
             return
         QMessageBox.information(self, p.PROGRAMM,
                                 _("Verbindung in Ordnung – {n} Sicherungen gefunden.").format(n=n))
