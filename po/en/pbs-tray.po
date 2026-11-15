@@ -292,3 +292,96 @@ msgstr "Backup running: {prozent}"
 
 msgid "Sicherung läuft: {prozent} – noch ca. {rest}"
 msgstr "Backup running: {prozent} – about {rest} left"
+
+msgid "%d.%m.%Y um %H:%M Uhr"
+msgstr "%Y-%m-%d at %H:%M"
+
+msgid "Der Server meldet einen anderen Fingerabdruck als eingetragen. Mit „Vom Server holen“ neu abrufen und mit dem Dashboard vergleichen."
+msgstr "The server reports a different fingerprint than the one entered. Use \"Fetch from server\" to get it again and compare it with the dashboard."
+
+msgid "Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte beide Felder prüfen."
+msgstr "Login rejected: the API token or the token secret is wrong. Please check both fields."
+
+msgid "Die Anmeldung klappt, aber dem API-Token fehlen Rechte auf Datastore oder Namespace. Bitte Datastore, Namespace und die Rechte des Tokens im PBS prüfen."
+msgstr "Login works, but the API token has no permission on the datastore or namespace. Check the datastore, the namespace and the token's permissions in PBS."
+
+msgid "Das Programm proxmox-backup-client fehlt. Bitte pbs-desk mit --with-client neu installieren."
+msgstr "proxmox-backup-client is missing. Please reinstall pbs-desk with --with-client."
+
+msgid "Server nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen."
+msgstr "Server not reachable. Please check the network connection and the server address."
+
+msgid "Zu jedem Feld erscheint eine kurze Erklärung, wenn die Maus darauf zeigt. Grau geschriebene Werte sind nur Beispiele."
+msgstr "Point at a field to see a short explanation. Grey values are only examples."
+
+msgid "z. B. {wert}"
+msgstr "e.g. {wert}"
+
+msgid "Netzwerk-Port des Servers. Fast immer 8007."
+msgstr "The server's network port. Almost always 8007."
+
+msgid "Datastore: der Speicherbereich auf dem Backup-Server, in dem die Sicherungen liegen. Der Name steht in der PBS-Oberfläche links unter „Datastore“."
+msgstr "Datastore: the storage area on the backup server that holds the backups. Its name is listed on the left under \"Datastore\" in the PBS web interface."
+
+msgid "API-Token: der Zugang dieses Geräts zum Server, geschrieben als benutzer@realm!tokenname. Angelegt wird er im PBS unter Zugriffskontrolle → API-Token."
+msgstr "API token: this device's login on the server, written as user@realm!tokenname. You create it in PBS under Access Control > API Token."
+
+msgid "Token-Geheimnis: das Passwort zum API-Token. Der PBS zeigt es nur einmal beim Anlegen. Es liegt danach nur in einer Datei, die allein root lesen darf."
+msgstr "Token secret: the password for the API token. PBS shows it only once, when you create the token. After saving it sits in a file only root can read."
+
+msgid "Namespace: ein Unterordner im Datastore, damit Geräte oder Personen getrennt bleiben. Leer = oberste Ebene."
+msgstr "Namespace: a subfolder in the datastore that keeps devices or people apart. Empty = top level."
+
+msgid "Backup-ID: der Name, unter dem die Sicherungen dieses Geräts auf dem Server erscheinen. Leer = Rechnername."
+msgstr "Backup ID: the name this device's backups have on the server. Empty = computer name."
+
+msgid "Fingerabdruck: die Prüfsumme des Server-Zertifikats. Daran erkennt PBS-Desk, dass es mit dem richtigen Server spricht. Mit „Vom Server holen“ abrufen und mit dem PBS-Dashboard vergleichen (Fingerabdruck anzeigen)."
+msgstr "Fingerprint: the checksum of the server certificate. It tells PBS-Desk that it is talking to the right server. Use \"Fetch from server\" and compare it with the PBS dashboard (Show Fingerprint)."
+
+msgid "Gesichert werden das System (/) und die persönlichen Dateien (/home), ohne Zwischenspeicher, Papierkorb und Container. Ordner und Ausschlüsse legt die Datei {datei} fest (EXCLUDES)."
+msgstr "Backs up the system (/) and personal files (/home), without caches, trash and containers. Folders and exclusions are set in {datei} (EXCLUDES)."
+
+msgid "Umfang:"
+msgstr "Scope:"
+
+msgid "Sicherung wird vorbereitet (Größe wird ermittelt) …"
+msgstr "Preparing backup (measuring size) …"
+
+msgid "Bitte nicht herunterfahren, sonst bricht die Sicherung ab."
+msgstr "Please don't shut down, or the backup stops."
+
+msgid "✗ Noch nicht eingerichtet: bitte „Einstellungen …“ öffnen"
+msgstr "✗ Not set up yet: open \"Settings …\""
+
+msgid "✗ Letzte Sicherung fehlgeschlagen"
+msgstr "✗ Last backup failed"
+
+msgid "✗ Sicherung abgebrochen"
+msgstr "✗ Backup cancelled"
+
+msgid "✗ Noch kein erfolgreiches Backup"
+msgstr "✗ No successful backup yet"
+
+msgid "✗ Backup überfällig ({tage} Tage)"
+msgstr "✗ Backup overdue ({tage} days)"
+
+msgid "✓ Heute gesichert"
+msgstr "✓ Backed up today"
+
+msgid "✓ Letztes Backup vor einem Tag"
+msgstr "✓ Last backup one day ago"
+
+msgid "✓ Letztes Backup vor {tage} Tagen"
+msgstr "✓ Last backup {tage} days ago"
+
+msgid "Sicherung abbrechen"
+msgstr "Cancel backup"
+
+msgid "Verlauf …"
+msgstr "History …"
+
+msgid "Laufende Sicherung wirklich abbrechen? Bereits gesicherte Daten bleiben erhalten, die nächste Sicherung startet normal."
+msgstr "Cancel the running backup? Data already backed up is kept, and the next backup starts as usual."
+
+msgid "Abbrechen fehlgeschlagen:\n{fehler}"
+msgstr "Could not cancel:\n{fehler}"

@@ -30,6 +30,7 @@ entfernt den Server samt Token.
 import gettext
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -170,6 +171,15 @@ def server_schreiben(lokal, token):
         schreibe(os.path.join(CRED, "token"), token, 0o600)
 
 
+def client_pfad():
+    """proxmox-backup-client suchen. pkexec setzt einen knappen PATH ohne
+    /usr/local/bin, wo install.sh --with-client den Client ablegt."""
+    return (shutil.which("proxmox-backup-client",
+                         path=os.pathsep.join([os.environ.get("PATH", ""), "/usr/local/bin",
+                                               "/usr/local/sbin", "/usr/bin", "/usr/sbin"]))
+            or "proxmox-backup-client")
+
+
 def server_test():
     lokal = lies(LOKAL)
     if not lokal.get("SERVER_HOST") or not os.path.exists(os.path.join(CRED, "token")):
@@ -178,7 +188,7 @@ def server_test():
     with open(os.path.join(CRED, "token")) as f:
         token = f.read().strip()
     umgebung = dict(os.environ, PBS_PASSWORD=token, PBS_FINGERPRINT=lokal["SERVER_FINGERPRINT"])
-    befehl = ["proxmox-backup-client", "snapshot", "list", "--repository", repository(lokal),
+    befehl = [client_pfad(), "snapshot", "list", "--repository", repository(lokal),
               "--output-format", "json"]
     if lokal.get("SERVER_NS"):
         befehl += ["--ns", lokal["SERVER_NS"]]
@@ -337,13 +347,10 @@ def main(argv):
     if server_geaendert:
         server_schreiben(lokal, token)
     speichern(lokal)
-    if any(k in ERLAUBT for k in lokal):
-        text = _("gespeichert ({schluessel} lokal)").format(
-            schluessel=", ".join(sorted(k for k in lokal if k in ERLAUBT)))
-    else:
-        text = _("gespeichert, Zeiten und Drossel auf Standard")
+    # Fuer Menschen: keine internen Schluesselnamen in der Bestaetigung
+    text = _("Einstellungen gespeichert.")
     if lokal.get("SERVER_HOST"):
-        text += _(", Server {host}").format(host=lokal["SERVER_HOST"])
+        text += " " + _("Backup-Server: {host}.").format(host=lokal["SERVER_HOST"])
     print("OK: " + text)
     skip = lokal.get("ARBEITSZEIT_SKIP", std.get("ARBEITSZEIT_SKIP", "1")) == "1"
     gesperrt = [z for z in lokal.get("ZEITEN", "").split(",") if z and skip and ws <= int(z[:2]) < we]

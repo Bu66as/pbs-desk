@@ -113,6 +113,8 @@ declare -A EN=(
   ["Automatik: Abend"]="automatic: evening"
   ["Automatik: Tag"]="automatic: day"
   ["LAN: frei"]="LAN: unlimited"
+  ["Sicherung abgebrochen"]="Backup cancelled"
+  ["Die Sicherung von %s wurde abgebrochen. Bereits gesicherte Daten bleiben erhalten, die nächste Sicherung startet normal."]="The backup of %s was cancelled. Data already backed up is kept, and the next backup starts as usual."
 )
 t() {
   local f=$1; shift
@@ -123,6 +125,19 @@ t() {
 
 mkdir -p "$STAMP_DIR"
 exec >> "$LOG" 2>&1
+
+# Abbrechen (Tray "Sicherung abbrechen" = systemctl stop): Marke ins Log, damit
+# Tray und Verlauf "abgebrochen" zeigen, und die Fortschrittsdatei entfernen.
+abbruch() {
+  trap - TERM INT
+  [[ -n "${LAUF_PID:-}" ]] && kill "$LAUF_PID" 2>/dev/null
+  rm -f /run/pbs-desk/fortschritt.json
+  echo "=== ABGEBROCHEN $(date -Is) Ziel=${ZIEL_NAME:-?} ==="
+  notify_desktop normal "$(t "Sicherung abgebrochen")" \
+    "$(t "Die Sicherung von %s wurde abgebrochen. Bereits gesicherte Daten bleiben erhalten, die nächste Sicherung startet normal." "$DEVICE_NAME")" ersetzt
+  exit 143
+}
+trap abbruch TERM INT
 echo "=== START $(date -Is) geraet=$DEVICE_NAME id=$BACKUP_ID ns=$PBS_NS mobil=$MOBIL ==="
 
 # --- Ueberfaellig-Warnung (vor allen SKIPs, sonst faellt ein Dauerausfall nie auf)

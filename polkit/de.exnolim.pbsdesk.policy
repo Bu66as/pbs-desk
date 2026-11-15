@@ -16,4 +16,17 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/local/sbin/pbs-restore-helper</annotate>
   </action>
+  <action id="de.exnolim.pbsdesk.settings">
+    <description>Change backup settings</description>
+    <description xml:lang="de">Backup-Einstellungen ändern</description>
+    <message>Authentication is required to change the backup settings</message>
+    <message xml:lang="de">Zum Ändern der Backup-Einstellungen ist eine Anmeldung nötig</message>
+    <icon_name>drive-harddisk</icon_name>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/sbin/pbs-settings</annotate>
+  </action>
 </policyconfig>

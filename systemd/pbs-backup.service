@@ -11,6 +11,8 @@ ConditionPathExists=|/etc/proxmox-backup-client/offsite/token
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/pbs-backup
+# Nach Abbruch keine verwaiste Fortschrittsanzeige im Tray
+ExecStopPost=-/usr/bin/rm -f /run/pbs-desk/fortschritt.json
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

@@ -19,7 +19,7 @@ import sys
 from datetime import datetime
 
 from PySide6.QtCore import QLibraryInfo, QLocale, QProcess, QTranslator, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
                                QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
@@ -52,6 +52,7 @@ DEZIMALZEICHEN = "," if _sprache_deutsch() else "."
 RE_START = re.compile(r"^=== START (\S+)")
 RE_DONE = re.compile(r"^=== DONE (\S+) Ziel=(\S+) Dauer=(\d+)min")
 RE_FEHLER = re.compile(r"^=== FEHLER rc=(\d+) (\S+) Ziel=(\S+)")
+RE_ABBRUCH = re.compile(r"^=== ABGEBROCHEN (\S+) Ziel=(\S+)")
 RE_ZIEL = re.compile(r"^--- Backup Ziel=(\S+)")
 
 
@@ -135,6 +136,8 @@ def verlauf_lesen(pfade=None):
         elif RE_FEHLER.match(z):
             m = RE_FEHLER.match(z)
             lauf.update(ergebnis="fehlgeschlagen", ziel=m.group(3), hinweis=_("Fehlercode {rc}").format(rc=m.group(1)))
+        elif RE_ABBRUCH.match(z):
+            lauf.update(ergebnis="abgebrochen", hinweis=_("von Hand abgebrochen"))
     laeufe.reverse()
     return laeufe
 
@@ -148,9 +151,9 @@ def backup_laeuft():
 
 
 class Fenster(QMainWindow):
-    def __init__(self):
+    def __init__(self, nur_verlauf=False):
         super().__init__()
-        self.setWindowTitle(_("PBS-Desk – Wiederherstellen"))
+        self.setWindowTitle(_("PBS-Desk – Verlauf") if nur_verlauf else _("PBS-Desk – Wiederherstellen"))
         self.setWindowIcon(QIcon.fromTheme("pbs-desk", QIcon.fromTheme("document-revert")))
         self.resize(760, 560)
         self.prozesse = []
@@ -159,9 +162,16 @@ class Fenster(QMainWindow):
         reiter.addTab(self._reiter_sicherungen(), _("Wiederherstellen"))
         reiter.addTab(self._reiter_verlauf(), _("Verlauf"))
         self.setCentralWidget(reiter)
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, activated=self.close)
         self.offene_zeigen()
         self.verlauf_zeigen()
-        self.laden()
+        self._geladen = False
+        if nur_verlauf:
+            # Aus dem Tray "Verlauf …": keine Anmeldung, solange nur der Verlauf gefragt ist
+            reiter.setCurrentIndex(1)
+            reiter.currentChanged.connect(lambda i: i == 0 and not self._geladen and self.laden())
+        else:
+            self.laden()
 
     # --- Reiter Wiederherstellen ---
     def _reiter_sicherungen(self):
@@ -176,7 +186,10 @@ class Fenster(QMainWindow):
         self.baum.setColumnWidth(0, 330)
         self.baum.setColumnWidth(1, 130)
         self.baum.itemSelectionChanged.connect(self.auswahl)
-        self.baum.itemDoubleClicked.connect(lambda *_: self.oeffnen())
+        # Enter auf einer Zeile: Bereich oeffnen bzw. Sicherung aufklappen
+        self.baum.itemActivated.connect(self.aktiviert)
+        self.baum.headerItem().setToolTip(3, _("Geprüft: ob der Server die Sicherung schon auf "
+                                              "Lesbarkeit kontrolliert hat (Verify-Auftrag im PBS)."))
         v.addWidget(self.baum, 3)
 
         zeile = QHBoxLayout()
@@ -236,6 +249,7 @@ class Fenster(QMainWindow):
         return zeilen[-1][7:].strip() if zeilen else (err.splitlines()[-1] if err else _("Fehler {rc}").format(rc=rc))
 
     def laden(self):
+        self._geladen = True
         self.knopf_laden.setEnabled(False)
         self.status.setText(_("Sicherungen werden geladen …"))
         self.helfer(["snapshots"], self.geladen)
@@ -280,8 +294,16 @@ class Fenster(QMainWindow):
             text = _("{n} Sicherungen auf {ziel}. Sicherung aufklappen, Bereich wählen und öffnen.")
         self.status.setText(text.format(n=n, ziel=daten["ziel_name"]))
 
+    def aktiviert(self, item, _spalte=0):
+        if item.childCount() > 1:
+            item.setExpanded(not item.isExpanded())
+        else:
+            self.oeffnen()
+
     def gewaehltes_archiv(self):
-        item = self.baum.currentItem()
+        # Die markierte Zeile zaehlt, nicht die mit dem Tastaturfokus
+        gewaehlt = self.baum.selectedItems()
+        item = gewaehlt[0] if gewaehlt else self.baum.currentItem()
         if item is not None and item.childCount() == 1:   # Sicherung mit nur einem Archiv
             item = item.child(0)
         if item is None or item.isDisabled():
@@ -436,7 +458,7 @@ def main():
         app.installTranslator(qt_texte)
     app.setApplicationName("pbs-restore")
     app.setDesktopFileName("pbs-restore")
-    fenster = Fenster()
+    fenster = Fenster(nur_verlauf="--verlauf" in sys.argv[1:])
     fenster.show()
     return app.exec()
 

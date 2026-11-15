@@ -310,12 +310,16 @@ class Tray(QSystemTrayIcon):
 
         Windows 11 merkt sich Infobereich-Symbole unter HKCU\\Control Panel\\NotifyIconSettings;
         IsPromoted=1 zeigt es dauerhaft an. Nur einmal je Benutzer (Vermerk unter
-        HKCU\\Software\\PBS-Desk), damit eine spaetere Wahl des Benutzers bleibt."""
+        HKCU\\Software\\PBS-Desk), damit eine spaetere Wahl des Benutzers bleibt.
+        Windows fuehrt den Eintrag je .exe; wechselt der Starter (pythonw.exe -> PBS-Desk.exe),
+        gilt der Vermerk deshalb je Dateiname."""
         import winreg
+        exe = os.path.basename(sys.executable).lower()
+        vermerk = "SymbolAngezeigt" if exe == "pythonw.exe" else "SymbolAngezeigt-" + exe
         try:
             k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\PBS-Desk")
             try:
-                if winreg.QueryValueEx(k, "SymbolAngezeigt")[0] == 1:
+                if winreg.QueryValueEx(k, vermerk)[0] == 1:
                     return
             except OSError:
                 pass
@@ -334,7 +338,7 @@ class Tray(QSystemTrayIcon):
                         pfad = str(winreg.QueryValueEx(sub, "ExecutablePath")[0]).lower()
                     except OSError:
                         continue
-                    if pfad.endswith("\\pbs-desk\\python\\pythonw.exe"):
+                    if pfad.endswith("\\pbs-desk\\python\\" + exe):
                         winreg.SetValueEx(sub, "IsPromoted", 0, winreg.REG_DWORD, 1)
                         gefunden = True
             except OSError:
@@ -344,7 +348,7 @@ class Tray(QSystemTrayIcon):
                 if self._erststart_versuche < 12:   # Explorer legt den Eintrag verzoegert an
                     QTimer.singleShot(5000, self.erststart)
                     return
-            winreg.SetValueEx(k, "SymbolAngezeigt", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(k, vermerk, 0, winreg.REG_DWORD, 1)
         except OSError:
             return
         self.showMessage(p.PROGRAMM, _(

@@ -8,3 +8,14 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
+
+// Einstellungen (pkexec pbs-settings) ohne Admin-Passwort, aber nur fuer den
+// Desktop-Benutzer, den install.sh eingetragen hat, und nur in der aktiven
+// lokalen Sitzung. Andere Konten brauchen weiter ein Admin-Passwort.
+polkit.addRule(function(action, subject) {
+    if (action.id == "de.exnolim.pbsdesk.settings" &&
+        subject.user == "@DESKTOP_USER@" &&
+        subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+});

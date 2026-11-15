@@ -170,3 +170,12 @@ msgstr "No history yet ({datei})."
 
 msgid "{gezeigt} von {gesamt} Läufen aus {datei}"
 msgstr "{gezeigt} of {gesamt} runs from {datei}"
+
+msgid "von Hand abgebrochen"
+msgstr "cancelled by hand"
+
+msgid "PBS-Desk – Verlauf"
+msgstr "PBS-Desk – History"
+
+msgid "Geprüft: ob der Server die Sicherung schon auf Lesbarkeit kontrolliert hat (Verify-Auftrag im PBS)."
+msgstr "Verified: whether the server has already checked that the backup is readable (verify job in PBS)."

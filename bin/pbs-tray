@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -162,6 +163,43 @@ def lauf_kennung():
     return lauf("systemctl", "show", UNIT, "-p", "InvocationID", "--value")[1]
 
 
+def letztes_ergebnis():
+    """Ergebnis des letzten echten Laufs (uebersprungene zaehlen nicht):
+    'ok', 'fehler', 'abgebrochen', 'offen' (laeuft oder ohne Endmarke) oder None."""
+    try:
+        with open(LOG, errors="replace") as f:
+            zeilen = f.readlines()[-2000:]
+    except OSError:
+        return None
+    ergebnis, lauf = None, None
+    for z in zeilen:
+        if z.startswith("=== START"):
+            if lauf not in (None, "skip"):
+                ergebnis = lauf
+            lauf = "offen"
+        elif lauf is None:
+            continue
+        elif z.startswith("SKIP:"):
+            lauf = "skip"
+        elif z.startswith("=== DONE"):
+            lauf = "ok"
+        elif z.startswith("=== FEHLER"):
+            lauf = "fehler"
+        elif z.startswith("=== ABGEBROCHEN"):
+            lauf = "abgebrochen"
+    if lauf not in (None, "skip"):
+        ergebnis = lauf
+    return ergebnis
+
+
+def eingerichtet():
+    """Ist ein Backup-Server eingetragen (zentral oder im Einstellungsfenster)?"""
+    if verwaltet():
+        return True
+    w = conf_werte()
+    return bool(w.get("SERVER_HOST") or w.get("LAN_HOST") or w.get("OFFSITE_HOST"))
+
+
 def letzte_meldung():
     """Letzte Zeile des aktuellen Laufs im Log, z.B. der SKIP-Grund."""
     zeilen = [z.strip() for z in log_zeilen_aktueller_lauf() if z.strip()]
@@ -245,8 +283,56 @@ def fingerabdruck(host, port):
 
 
 def naechster_versuch():
-    _, out, _ = lauf("systemctl", "show", "pbs-backup.timer", "-p", "NextElapseUSecRealtime", "--value")
-    return out or "?"
+    """Naechster Timer-Termin, lesbar und in der Sprache der Oberflaeche."""
+    _rc, out, _err = lauf("systemctl", "show", "pbs-backup.timer", "-p", "NextElapseUSecRealtime",
+                     "--value", "--timestamp=unix")
+    try:
+        return datetime.fromtimestamp(int(out.lstrip("@"))).strftime(_("%d.%m.%Y um %H:%M Uhr"))
+    except ValueError:
+        return out or "?"
+
+
+def client_pfad():
+    """proxmox-backup-client auch dann finden, wenn /usr/local/bin nicht im PATH ist."""
+    return (shutil.which("proxmox-backup-client",
+                         path=os.pathsep.join([os.environ.get("PATH", ""), "/usr/local/bin", "/usr/bin"]))
+            or "proxmox-backup-client")
+
+
+def engine_meldung(roh):
+    """Rohe Fehlermeldung von Engine/pbs-settings in einen Satz fuer Menschen uebersetzen.
+
+    Gibt None zurueck, wenn nichts passt; dann wird der Rohtext gezeigt.
+    Reihenfolge zaehlt: ein Zertifikatsfehler steckt oft in "error trying to connect".
+    """
+    t = roh.lower()
+    if "fingerprint" in t or "certificate verify failed" in t:
+        return _("Der Server meldet einen anderen Fingerabdruck als eingetragen. Mit „Vom Server holen“ "
+                 "neu abrufen und mit dem Dashboard vergleichen.")
+    if "authentication failed" in t or "401" in t:
+        return _("Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte beide Felder prüfen.")
+    if "permission check failed" in t or "403" in t:
+        return _("Die Anmeldung klappt, aber dem API-Token fehlen Rechte auf Datastore oder Namespace. "
+                 "Bitte Datastore, Namespace und die Rechte des Tokens im PBS prüfen.")
+    if "no such file or directory" in t and "proxmox-backup-client" in t:
+        return _("Das Programm proxmox-backup-client fehlt. Bitte pbs-desk mit --with-client neu installieren.")
+    netz = ("connection refused", "timed out", "timeout", "no route", "unreachable", "not known",
+            "dns error", "failed to lookup", "error trying to connect", "connection reset", "tcp connect",
+            "network is", "antwortet nicht", "errno 113", "errno 111", "errno 110")
+    if any(n in t for n in netz):
+        return _("Server nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen.")
+    return None
+
+
+def fehler_zeigen(eltern, roh):
+    """Fehlerfenster: verstaendlicher Satz oben, Rohtext nur unter "Details"."""
+    roh = "\n".join(z[len("FEHLER:"):].strip() if z.startswith("FEHLER:") else z
+                    for z in roh.strip().splitlines())
+    satz = engine_meldung(roh)
+    box = QMessageBox(QMessageBox.Icon.Warning, PROGRAMM, satz or roh, parent=eltern)
+    if satz:
+        box.setDetailedText(roh)
+    box.exec()
 
 
 class EinstellungenDialog(QDialog):
@@ -292,6 +378,11 @@ class EinstellungenDialog(QDialog):
         self.skip.toggled.connect(self.we.setEnabled)
         self.ws.setEnabled(self.skip.isChecked())
         self.we.setEnabled(self.skip.isChecked())
+        umfang = QLabel(_("Gesichert werden das System (/) und die persönlichen Dateien (/home), "
+                          "ohne Zwischenspeicher, Papierkorb und Container. Ordner und Ausschlüsse "
+                          "legt die Datei {datei} fest (EXCLUDES).").format(datei=CONF))
+        umfang.setWordWrap(True)
+        f.addRow(_("Umfang:"), umfang)
         lay.addWidget(g)
         lay.addWidget(self.server_gruppe())
 
@@ -323,10 +414,18 @@ class EinstellungenDialog(QDialog):
         knoepfe.rejected.connect(self.reject)
         standard.clicked.connect(self.zuruecksetzen)
         lay.addWidget(knoepfe)
+        # Umbrechende Hinweise: Hoehe erst nach fester Breite berechnen lassen,
+        # sonst schneidet Qt die letzten Zeilen ab.
+        self.setMinimumWidth(560)
+        self.adjustSize()
 
     def server_gruppe(self):
         g = QGroupBox(_("Backup-Server"))
-        f = QFormLayout(g)
+        # Umbrechende Hinweise ausserhalb des Formulars: als Zeile ueber die volle
+        # Breite berechnet QFormLayout ihre Hoehe zu knapp.
+        v = QVBoxLayout(g)
+        f = QFormLayout()
+        v.addLayout(f)
         self.server = {}
         if verwaltet():
             w = standard_werte()
@@ -336,22 +435,35 @@ class EinstellungenDialog(QDialog):
             hinweis = QLabel(_("Dieses Gerät wird zentral verwaltet. Server und Zugangsdaten "
                                "kommen aus der Verwaltung und lassen sich hier nicht ändern."))
             hinweis.setWordWrap(True)
-            f.addRow(hinweis)
+            v.addWidget(hinweis)
             return g
         w = datei_werte(LOKAL)
         self.token_gespeichert = bool(w.get("SERVER_HOST"))
+        tipp = QLabel(_("Zu jedem Feld erscheint eine kurze Erklärung, wenn die Maus darauf zeigt. "
+                        "Grau geschriebene Werte sind nur Beispiele."))
+        tipp.setWordWrap(True)
+        v.insertWidget(0, tipp)
+        beispiel = _("z. B. {wert}")
         felder = (
-            ("SERVER_HOST", _("Server:"), _("pbs.example.org oder 192.168.1.10"),
+            ("SERVER_HOST", _("Server:"), beispiel.format(wert="pbs.example.org / 192.168.1.10"),
              _("Name oder IPv4-Adresse des Proxmox Backup Servers. Leer = kein eigener Server.")),
-            ("SERVER_PORT", _("Port:"), "8007", ""),
-            ("SERVER_DATASTORE", _("Datastore:"), "tank", ""),
-            ("SERVER_AUTHID", _("API-Token:"), "backup@pbs!notebook",
-             _("Benutzer und Token-Name in der Form benutzer@realm!tokenname")),
+            ("SERVER_PORT", _("Port:"), beispiel.format(wert="8007"),
+             _("Netzwerk-Port des Servers. Fast immer 8007.")),
+            ("SERVER_DATASTORE", _("Datastore:"), beispiel.format(wert="tank"),
+             _("Datastore: der Speicherbereich auf dem Backup-Server, in dem die Sicherungen liegen. "
+               "Der Name steht in der PBS-Oberfläche links unter „Datastore“.")),
+            ("SERVER_AUTHID", _("API-Token:"), beispiel.format(wert="backup@pbs!notebook"),
+             _("API-Token: der Zugang dieses Geräts zum Server, geschrieben als benutzer@realm!tokenname. "
+               "Angelegt wird er im PBS unter Zugriffskontrolle → API-Token.")),
             ("TOKEN", _("Token-Geheimnis:"), _("unverändert") if self.token_gespeichert else "",
-             _("Liegt danach nur in einer Datei, die allein root lesen darf.")),
-            ("SERVER_NS", _("Namespace:"), _("leer = oberste Ebene"), ""),
+             _("Token-Geheimnis: das Passwort zum API-Token. Der PBS zeigt es nur einmal beim Anlegen. "
+               "Es liegt danach nur in einer Datei, die allein root lesen darf.")),
+            ("SERVER_NS", _("Namespace:"), _("leer = oberste Ebene"),
+             _("Namespace: ein Unterordner im Datastore, damit Geräte oder Personen getrennt bleiben. "
+               "Leer = oberste Ebene.")),
             ("SERVER_ID", _("Backup-ID:"), os.uname().nodename.split(".")[0],
-             _("Name der Sicherung auf dem Server. Leer = Rechnername.")),
+             _("Backup-ID: der Name, unter dem die Sicherungen dieses Geräts auf dem Server erscheinen. "
+               "Leer = Rechnername.")),
         )
         for k, text, platzhalter, tipp in felder:
             e = QLineEdit(w.get(k, ""))
@@ -363,6 +475,9 @@ class EinstellungenDialog(QDialog):
             f.addRow(text, e)
         fp = QLineEdit(w.get("SERVER_FINGERPRINT", ""))
         fp.setPlaceholderText(_("vom Server holen und mit der Anzeige im PBS vergleichen"))
+        fp.setToolTip(_("Fingerabdruck: die Prüfsumme des Server-Zertifikats. Daran erkennt PBS-Desk, dass "
+                        "es mit dem richtigen Server spricht. Mit „Vom Server holen“ abrufen und mit dem "
+                        "PBS-Dashboard vergleichen (Fingerabdruck anzeigen)."))
         self.server["SERVER_FINGERPRINT"] = fp
         holen = QPushButton(_("Vom Server holen"))
         holen.clicked.connect(self.fingerabdruck_holen)
@@ -395,7 +510,7 @@ class EinstellungenDialog(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
         if fp is None:
-            QMessageBox.warning(self, PROGRAMM, _("{host}:{port} antwortet nicht:\n{fehler}").format(
+            fehler_zeigen(self, _("{host}:{port} antwortet nicht:\n{fehler}").format(
                 host=host, port=port, fehler=fehler))
             return
         frage = _("Der Server {host}:{port} meldet diesen Fingerabdruck:\n\n{fp}\n\n"
@@ -414,7 +529,7 @@ class EinstellungenDialog(QDialog):
                 repo = (f"{self.server_wert('SERVER_AUTHID')}@{self.server_wert('SERVER_HOST')}:"
                         f"{self.server_wert('SERVER_PORT') or '8007'}:"
                         f"{self.server_wert('SERVER_DATASTORE')}")
-                befehl = ["proxmox-backup-client", "snapshot", "list", "--repository", repo,
+                befehl = [client_pfad(), "snapshot", "list", "--repository", repo,
                           "--output-format", "json"]
                 if self.server_wert("SERVER_NS"):
                     befehl += ["--ns", self.server_wert("SERVER_NS")]
@@ -439,7 +554,7 @@ class EinstellungenDialog(QDialog):
         if rc == 0:
             QMessageBox.information(self, PROGRAMM, out)
         elif not (rc in (126, 127) and not err.startswith("FEHLER")):
-            QMessageBox.warning(self, PROGRAMM, err or _("Fehler (rc={rc})").format(rc=rc))
+            fehler_zeigen(self, err or _("Fehler (rc={rc})").format(rc=rc))
 
     def ausfuehren(self, *args, eingabe=None):
         if eingabe is None:
@@ -452,12 +567,14 @@ class EinstellungenDialog(QDialog):
             except Exception as e:
                 rc, out, err = 1, "", str(e)
         if rc == 0:
-            QMessageBox.information(self, PROGRAMM, out or _("Gespeichert."))
+            # "OK:" ist nur fuer Skripte da
+            text = "\n".join(z[3:].strip() if z.startswith("OK:") else z for z in out.splitlines())
+            QMessageBox.information(self, PROGRAMM, text or _("Gespeichert."))
             self.accept()
         elif rc in (126, 127) and not err.startswith("FEHLER"):
             pass  # Passwortabfrage abgebrochen
         else:
-            QMessageBox.warning(self, PROGRAMM, err or out or _("Fehler (rc={rc})").format(rc=rc))
+            fehler_zeigen(self, err or out or _("Fehler (rc={rc})").format(rc=rc))
 
     def speichern(self):
         args = [f"ZEITEN={self.zeiten.text()}",
@@ -669,6 +786,7 @@ class Tray(QSystemTrayIcon):
         self.activated.connect(self.geklickt)
         self._abschalten = None
         self._balken = None
+        self._letzter_fd = None   # letzter bekannter Fortschritt dieses Laufs
         abschalt_merker(False)   # Rest eines abgestuerzten Trays
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.aktualisieren)
@@ -685,7 +803,9 @@ class Tray(QSystemTrayIcon):
 
         if aktiv:
             icon, kopf = "pbs-desk-laeuft", _("Backup läuft gerade")
-            fd = fortschritt_daten()
+            # Gegen Ende (letztes Archiv) fehlt die Datei kurz: letzten Stand weiter zeigen
+            fd = fortschritt_daten() or self._letzter_fd
+            self._letzter_fd = fd
             fs = fortschritt()
             lr, lq = laufende_rate()
             tempo = _("Tempo: {rate}").format(rate=lr) + (f" ({lq})" if lq else "") if lr else None
@@ -695,7 +815,7 @@ class Tray(QSystemTrayIcon):
                 if fs:
                     zeilen.append(fs)
             else:
-                zeilen = [kopf, fs or _("startet …")]
+                zeilen = [kopf, fs or _("Sicherung wird vorbereitet (Größe wird ermittelt) …")]
             lz = laufendes_ziel()
             if lz:
                 zeilen.append(_("Ziel: {ziel}").format(ziel=lz))
@@ -704,22 +824,30 @@ class Tray(QSystemTrayIcon):
             # Mit gesetztem Merker faehrt der Rechner selbst herunter; die Bitte,
             # nicht herunterzufahren, wuerde dem widersprechen.
             zeilen += ["", _("Danach fährt der Rechner herunter.") if self._abschalten
-                       else _("Bitte nicht herunterfahren.")]
+                       else _("Bitte nicht herunterfahren, sonst bricht die Sicherung ab.")]
         else:
-            if alter is None:
-                icon, kopf = "pbs-desk-warnung", _("Noch kein erfolgreiches Backup")
-                zeilen = [kopf]
+            self._letzter_fd = None
+            ergebnis = letztes_ergebnis()
+            if not eingerichtet():
+                icon, kopf = "pbs-desk-warnung", _("✗ Noch nicht eingerichtet: bitte „Einstellungen …“ öffnen")
+            elif ergebnis == "fehler":
+                icon, kopf = "pbs-desk-warnung", _("✗ Letzte Sicherung fehlgeschlagen")
+            elif ergebnis in ("abgebrochen", "offen"):
+                icon, kopf = "pbs-desk-warnung", _("✗ Sicherung abgebrochen")
+            elif alter is None:
+                icon, kopf = "pbs-desk-warnung", _("✗ Noch kein erfolgreiches Backup")
+            elif alter >= 3:
+                icon, kopf = "pbs-desk-warnung", _("✗ Backup überfällig ({tage} Tage)").format(tage=alter)
+            elif alter == 0:
+                icon, kopf = "pbs-desk", _("✓ Heute gesichert")
+            elif alter == 1:
+                icon, kopf = "pbs-desk", _("✓ Letztes Backup vor einem Tag")
             else:
-                if alter == 0:
-                    icon, kopf = "pbs-desk", _("Heute gesichert ✓")
-                elif alter >= 3:
-                    icon, kopf = "pbs-desk-warnung", _("Backup überfällig ({tage} Tage)").format(tage=alter)
-                elif alter == 1:
-                    icon, kopf = "pbs-desk", _("Letztes Backup vor einem Tag")
-                else:
-                    icon, kopf = "pbs-desk", _("Letztes Backup vor {tage} Tagen").format(tage=alter)
+                icon, kopf = "pbs-desk", _("✓ Letztes Backup vor {tage} Tagen").format(tage=alter)
+            zeilen = [kopf]
+            if alter is not None:
                 # Datumsformat ist selbst ein Uebersetzungstext (strftime-Muster).
-                zeilen = [kopf, _("Letzter Erfolg: {datum}").format(datum=d.strftime(_("%d.%m.%Y")))]
+                zeilen.append(_("Letzter Erfolg: {datum}").format(datum=d.strftime(_("%d.%m.%Y"))))
             if letztes_ziel() and alter is not None:
                 zeilen.append(_("Gesichert nach: {ziel}").format(ziel=letztes_ziel()))
             if mobil():
@@ -758,10 +886,7 @@ class Tray(QSystemTrayIcon):
         m = self.menu
         m.clear()
         # Die Infozeilen bleiben aktiv: ausgegraut sind sie in Plasma kaum lesbar.
-
-        name = m.addAction(symbol("pbs-desk"),
-                           _("{programm} – Backup {geraet}").format(programm=PROGRAMM, geraet=geraet()))
-        m.addSeparator()
+        # Erste Zeile = Status auf einen Blick (✓/✗ bzw. Fortschritt).
         kopf = m.addAction(self._kopf)
         self._balken = None
         if self._aktiv and self._fd:
@@ -783,8 +908,7 @@ class Tray(QSystemTrayIcon):
             self.drossel_menue(m)
             m.addSeparator()
         if self._aktiv:
-            a = m.addAction(_("Backup läuft bereits"))
-            a.setEnabled(False)
+            m.addAction(_("Sicherung abbrechen")).triggered.connect(self.abbrechen)
         else:
             m.addAction(_("Backup jetzt starten …")).triggered.connect(self.starten)
         # Merker gilt nur fuer diese Sitzung: Abmelden oder Tray-Neustart hebt ihn auf.
@@ -795,7 +919,7 @@ class Tray(QSystemTrayIcon):
         a.toggled.connect(self.abschalten_umschalten)
         m.addAction(a)
         m.addAction(_("Wiederherstellen …")).triggered.connect(self.wiederherstellen)
-        m.addAction(_("Protokoll anzeigen …")).triggered.connect(self.protokoll)
+        m.addAction(_("Verlauf …")).triggered.connect(self.verlauf)
         m.addAction(_("Einstellungen …")).triggered.connect(self.einstellungen)
         m.addSeparator()
         m.addAction(_("Tray beenden")).triggered.connect(QApplication.quit)
@@ -839,6 +963,17 @@ class Tray(QSystemTrayIcon):
             QTimer.singleShot(3000, self.aktualisieren)
         return True
 
+    def abbrechen(self):
+        frage = _("Laufende Sicherung wirklich abbrechen? Bereits gesicherte Daten bleiben erhalten, "
+                  "die nächste Sicherung startet normal.")
+        if QMessageBox.question(None, PROGRAMM, frage) != QMessageBox.StandardButton.Yes:
+            return
+        # Wie starten(): polkit erlaubt stop fuer pbs-backup.service in der aktiven Sitzung
+        rc, out, err = lauf("systemctl", "stop", "--no-block", UNIT, timeout=120)
+        if rc != 0:
+            QMessageBox.warning(None, PROGRAMM, _("Abbrechen fehlgeschlagen:\n{fehler}").format(fehler=err or out))
+        QTimer.singleShot(3000, self.aktualisieren)
+
     def abschalten_umschalten(self, an):
         if not an:
             self._abschalten = None
@@ -880,16 +1015,9 @@ class Tray(QSystemTrayIcon):
         dlg.exec()
         self.aktualisieren()
 
-    def protokoll(self):
-        for term in (["konsole", "-e"], ["x-terminal-emulator", "-e"], ["xterm", "-e"]):
-            try:
-                subprocess.Popen(term + ["journalctl", "-u", UNIT, "-f", "-n", "80"])
-                return
-            except FileNotFoundError:
-                continue
-        QMessageBox.information(None, PROGRAMM,
-                                _("Kein Terminal gefunden.\n\n{befehl}").format(
-                                    befehl=f"journalctl -u {UNIT} -f"))
+    def verlauf(self):
+        # Verlauf liest das Skript-Log (fuer alle lesbar), nicht das Journal
+        subprocess.Popen([PBS_RESTORE, "--verlauf"], start_new_session=True)
 
 
 def main():

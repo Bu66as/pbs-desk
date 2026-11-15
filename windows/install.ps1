@@ -35,6 +35,9 @@ $Daten = "C:\ProgramData\PBS-Desk"
 $Quelle = Split-Path -Parent $PSScriptRoot     # Repo-Wurzel
 $Py  = Join-Path $Prog "python\python.exe"
 $Pyw = Join-Path $Prog "python\pythonw.exe"
+# Tray-Starter mit Dateibeschreibung "PBS-Desk" (legt build.ps1 an); sonst zeigt Windows "Python"
+$Tray = Join-Path $Prog "python\PBS-Desk.exe"
+if (-not (Test-Path $Tray)) { $Tray = $Pyw }
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
          ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -167,11 +170,11 @@ foreach ($t in "Sicherung-Hand", "Image-Hand", "Abbrechen") {
 
 # --- Autostart und Startmenue ------------------------------------------------------
 Schritt "Tray-Autostart und Startmenue"
-$tray = "`"$Pyw`" `"$Prog\app\pbs-tray.pyw`""
+$tray = "`"$Tray`" `"$Prog\app\pbs-tray.pyw`""
 Set-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "PBS-Desk" -Value $tray
 $sh = New-Object -ComObject WScript.Shell
 $lnk = $sh.CreateShortcut("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\PBS-Desk.lnk")
-$lnk.TargetPath = $Pyw
+$lnk.TargetPath = $Tray
 $lnk.Arguments = "`"$Prog\app\pbs-tray.pyw`""
 $lnk.WorkingDirectory = "$Prog\app"
 $lnk.Description = "PBS-Desk"

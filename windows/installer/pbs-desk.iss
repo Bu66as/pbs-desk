@@ -51,7 +51,7 @@ Source: "fingerabdruck.ps1"; Flags: dontcopy
 Source: "entfernen.ps1"; Flags: dontcopy
 
 [Run]
-Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\app\pbs-tray.pyw"""; WorkingDir: "{app}\app"; \
+Filename: "{app}\python\PBS-Desk.exe"; Parameters: """{app}\app\pbs-tray.pyw"""; WorkingDir: "{app}\app"; \
   Description: "{cm:TrayStarten}"; Flags: postinstall nowait runasoriginaluser skipifsilent
 
 [UninstallRun]

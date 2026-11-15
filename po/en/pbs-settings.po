@@ -62,3 +62,9 @@ msgstr ", server {host}"
 
 msgid "Hinweis: {zeiten} liegt in der Arbeitszeit ({beginn}-{ende} Uhr) und greift deshalb nur am Wochenende."
 msgstr "Note: {zeiten} falls within working hours ({beginn}:00–{ende}:00) and therefore only applies at weekends."
+
+msgid "Einstellungen gespeichert."
+msgstr "Settings saved."
+
+msgid "Backup-Server: {host}."
+msgstr "Backup server: {host}."

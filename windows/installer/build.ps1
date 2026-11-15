@@ -75,6 +75,25 @@ $env:QT_QPA_PLATFORM = "offscreen"
 & $Py -c "import sys;from PySide6.QtGui import QGuiApplication,QIcon;a=QGuiApplication(['x']);ok=QIcon(sys.argv[1]).pixmap(256,256).save(sys.argv[2],'ICO');sys.exit(0 if ok else 1)" "$Stage\icons\pbs-desk.svg" "$Stage\icons\pbs-desk.ico"
 Pruefe "pbs-desk.ico"
 
+# --- Tray-Starter -----------------------------------------------------------------
+# Windows zeigt im Infobereich und im Task-Manager die Dateibeschreibung der .exe an.
+# Bei pythonw.exe stuende dort "Python". Deshalb startet der Tray ueber eine Kopie
+# PBS-Desk.exe mit eigener Beschreibung und eigenem Symbol (rcedit, gegen SHA-256 geprueft).
+Schritt "Tray-Starter PBS-Desk.exe"
+$rcedit = Join-Path $Laden "rcedit-x64.exe"
+Invoke-WebRequest -UseBasicParsing "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $rcedit
+$ist = (Get-FileHash -Algorithm SHA256 $rcedit).Hash.ToLower()
+if ($ist -ne "3e7801db1a5edbec91b49a24a094aad776cb4515488ea5a4ca2289c400eade2a") { throw "Pruefsumme von rcedit stimmt nicht: $ist" }
+$starter = Join-Path $Stage "python\PBS-Desk.exe"
+Copy-Item (Join-Path $Stage "python\pythonw.exe") $starter
+& $rcedit $starter --set-version-string FileDescription "PBS-Desk" --set-version-string ProductName "PBS-Desk" `
+    --set-version-string OriginalFilename "PBS-Desk.exe" --set-version-string InternalName "PBS-Desk" `
+    --set-icon "$Stage\icons\pbs-desk.ico"
+Pruefe "rcedit"
+$probe = Start-Process -FilePath $starter -ArgumentList '-c "import PySide6.QtWidgets"' -Wait -PassThru
+if ($probe.ExitCode -ne 0) { throw "PBS-Desk.exe startet Python nicht (Exitcode $($probe.ExitCode))" }
+Write-Host "PBS-Desk.exe: $((Get-Item $starter).VersionInfo.FileDescription)"
+
 # --- Setup.exe ---------------------------------------------------------------------
 Schritt "Inno Setup"
 if (-not $Iscc) {

@@ -6,7 +6,8 @@
 #   sudo ./install.sh --with-client   fetch proxmox-backup-client from the official Proxmox
 #                                     .deb if it is missing (x86_64 only, for distributions
 #                                     without a package, e.g. Fedora)
-#   sudo ./install.sh --user NAME     desktop user (default: the user who ran sudo)
+#   sudo ./install.sh --user NAME     desktop user (default: the user logged in to the
+#                                     graphical session, otherwise the user who ran sudo)
 #   sudo ./install.sh --uninstall     remove the programs, keep settings
 #   sudo ./install.sh --purge         also remove settings, credentials and log
 #
@@ -29,7 +30,7 @@ MO=$PREFIX/share/locale/en/LC_MESSAGES/pbs-desk.mo
 DOC=$PREFIX/share/doc/pbs-desk
 CONF=/etc/default/pbs-backup
 
-MIT_DEPS=0; MIT_CLIENT=0; MODUS=install; BENUTZER=${SUDO_USER:-}
+MIT_DEPS=0; MIT_CLIENT=0; MODUS=install; BENUTZER=""
 while (( $# )); do
   case "$1" in
     --deps)        MIT_DEPS=1 ;;
@@ -47,6 +48,22 @@ done
 command -v systemctl >/dev/null || { echo "pbs-desk requires systemd." >&2; exit 1; }
 
 info() { printf '  %s\n' "$*"; }
+# Meldungen auf Deutsch, wenn die Sprache der Umgebung Deutsch ist: m "deutsch" "english"
+case "${LANGUAGE:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in de*) DE=1 ;; *) DE=0 ;; esac
+m() { if (( DE )); then printf '%s' "$1"; else printf '%s' "$2"; fi; }
+
+# Desktop-Benutzer: wer an der grafischen Sitzung angemeldet ist (nicht root),
+# sonst wer sudo aufgerufen hat. Wichtig fuer Meldungen und die Polkit-Regel.
+desktop_benutzer() {
+  local s typ name
+  for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+    typ=$(loginctl show-session "$s" -p Type --value 2>/dev/null) || continue
+    [[ "$typ" == wayland || "$typ" == x11 ]] || continue
+    name=$(loginctl show-session "$s" -p Name --value 2>/dev/null)
+    [[ -n "$name" && "$name" != root ]] && { echo "$name"; return; }
+  done
+  echo "${SUDO_USER:-}"
+}
 
 # ------------------------------------------------------------------ Entfernen
 entfernen() {
@@ -60,14 +77,16 @@ entfernen() {
         /usr/share/applications/pbs-restore.desktop "$POLKIT" "$MO" /etc/logrotate.d/pbs-backup
   rm -rf "$DOC"
   systemctl daemon-reload
-  echo "pbs-desk removed."
+  # Laufende Tray-Symbole beenden, sonst bleiben tote Menues stehen
+  pkill -x pbs-tray 2>/dev/null || true
+  m "pbs-desk ist entfernt." "pbs-desk removed."; echo
   if [[ "$MODUS" == purge ]]; then
     rm -rf /etc/systemd/system/pbs-backup.timer.d /etc/pbs-backup.local "$CONF" \
            /etc/proxmox-backup-client/lokal /var/lib/pbs-backup /var/log/pbs-backup.log*
     systemctl daemon-reload
-    echo "Settings, credentials (target lokal) and log removed."
+    m "Einstellungen, Zugangsdaten (Ziel lokal) und Protokoll sind entfernt." "Settings, credentials (target lokal) and log removed."; echo
   else
-    echo "Kept: $CONF, /etc/pbs-backup.local, /etc/proxmox-backup-client/, /var/log/pbs-backup.log"
+    echo "$(m "Behalten" "Kept"): $CONF, /etc/pbs-backup.local, /etc/proxmox-backup-client/, /var/log/pbs-backup.log"
   fi
 }
 if [[ "$MODUS" != install ]]; then entfernen; exit 0; fi
@@ -86,7 +105,7 @@ case "$PM" in
 esac
 if (( MIT_DEPS )); then
   [[ -n "$PM" ]] || { echo "No known package manager found, please install the dependencies manually." >&2; exit 1; }
-  echo "Installing dependencies with $PM: ${PAKETE[*]}"
+  echo "$(m "Installiere Abhängigkeiten mit" "Installing dependencies with") $PM: ${PAKETE[*]}"
   case "$PM" in
     dnf)     dnf install -y "${PAKETE[@]}" ;;
     zypper)  zypper --non-interactive install "${PAKETE[@]}" ;;
@@ -99,8 +118,8 @@ FEHLT=()
 for c in bash curl python3 notify-send pkexec; do command -v "$c" >/dev/null || FEHLT+=("$c"); done
 python3 -c 'import PySide6.QtWidgets' 2>/dev/null || FEHLT+=("PySide6 (Python)")
 if (( ${#FEHLT[@]} )); then
-  echo "Missing: ${FEHLT[*]}" >&2
-  [[ -n "$PM" ]] && echo "With --deps the installer fetches: ${PAKETE[*]}" >&2
+  echo "$(m "Es fehlt" "Missing"): ${FEHLT[*]}" >&2
+  [[ -n "$PM" ]] && echo "$(m "Mit --deps holt das Installationsprogramm" "With --deps the installer fetches"): ${PAKETE[*]}" >&2
   exit 1
 fi
 
@@ -129,7 +148,7 @@ HINWEIS
 fi
 
 # ------------------------------------------------------------------ Dateien
-echo "Installing pbs-desk to $PREFIX ..."
+echo "$(m "Installiere pbs-desk nach" "Installing pbs-desk to") $PREFIX ..."
 for f in "${SBIN[@]}"; do install -Dm 0755 "$QUELLE/bin/$f" "$PREFIX/sbin/$f"; done
 for f in "${BIN[@]}";  do install -Dm 0755 "$QUELLE/bin/$f" "$PREFIX/bin/$f"; done
 for f in "${ICONS[@]}"; do install -Dm 0644 "$QUELLE/icons/$f.svg" "$ICON_DIR/$f.svg"; done
@@ -141,6 +160,8 @@ install -Dm 0644 "$QUELLE/polkit/de.exnolim.pbsdesk.policy" "$POLKIT"
 # greift die Aktion sonst nicht und es kommt die allgemeine root-Abfrage
 HELFER_ECHT=$(readlink -f "$PREFIX/sbin/pbs-restore-helper")
 sed -i "s#/usr/local/sbin/pbs-restore-helper#$HELFER_ECHT#" "$POLKIT"
+SETTINGS_ECHT=$(readlink -f "$PREFIX/sbin/pbs-settings")
+sed -i "s#/usr/local/sbin/pbs-settings#$SETTINGS_ECHT#" "$POLKIT"
 # "Backup jetzt starten" im Tray ohne Passwortabfrage (nur pbs-backup.service)
 install -Dm 0644 "$QUELLE/polkit/50-pbs-desk.rules" /etc/polkit-1/rules.d/50-pbs-desk.rules
 install -Dm 0644 "$QUELLE/systemd/pbs-backup.service" /etc/systemd/system/pbs-backup.service
@@ -159,13 +180,18 @@ install -d -m 0755 /var/lib/pbs-backup /etc/proxmox-backup-client /etc/default /
 [[ -e /var/log/pbs-backup.log ]] || install -m 0644 /dev/null /var/log/pbs-backup.log
 
 # Handschalter-Datei gehoert dem Desktop-Benutzer (pbs-rate laeuft ohne root)
+[[ -n "$BENUTZER" ]] || BENUTZER=$(desktop_benutzer)
 if [[ -n "$BENUTZER" ]] && id "$BENUTZER" >/dev/null 2>&1; then
+  info "$(m "Desktop-Benutzer: $BENUTZER (anderer: --user NAME)" "Desktop user: $BENUTZER (other user: --user NAME)")"
   [[ -e /var/lib/pbs-backup/rate.override ]] || install -m 0644 /dev/null /var/lib/pbs-backup/rate.override
   chown "$BENUTZER": /var/lib/pbs-backup/rate.override
 else
-  echo "Note: no desktop user known (--user NAME); notifications and the manual bandwidth switch stay off." >&2
+  m "Hinweis: kein Desktop-Benutzer bekannt (--user NAME); Meldungen und Handschalter bleiben aus." \
+    "Note: no desktop user known (--user NAME); notifications and the manual bandwidth switch stay off." >&2; echo >&2
   BENUTZER=""
 fi
+# Einstellungen speichern ohne Admin-Passwort: nur fuer diesen Benutzer
+sed -i "s#@DESKTOP_USER@#$BENUTZER#" /etc/polkit-1/rules.d/50-pbs-desk.rules
 
 # Grundkonfiguration nur, wenn es noch keine gibt. VERWALTET=0 gibt im
 # Einstellungsfenster den Abschnitt "Backup-Server" frei.
@@ -196,16 +222,29 @@ EXCLUDES=(
 )
 KONF
   chmod 0644 "$CONF"
-  info "$CONF created"
+  info "$CONF $(m "angelegt" "created")"
 else
-  info "$CONF exists, left unchanged"
+  # Von install.sh angelegt: nur den Desktop-Benutzer nachziehen (frueher stand
+  # hier der sudo-Aufrufer); alles andere bleibt unveraendert.
+  if [[ -n "$BENUTZER" ]] && grep -q "angelegt von install.sh" "$CONF" && grep -q '^NOTIFY_USER=' "$CONF"; then
+    sed -i "s/^NOTIFY_USER=.*/NOTIFY_USER=\"$BENUTZER\"/" "$CONF"
+  fi
+  info "$CONF $(m "vorhanden, Einstellungen bleiben" "exists, settings kept")"
 fi
 
 systemctl daemon-reload
 systemctl enable --now pbs-backup.timer >/dev/null
-command -v snapper >/dev/null || info "snapper not found: the running system is backed up instead of a btrfs snapshot"
+command -v snapper >/dev/null || info "$(m "snapper fehlt: gesichert wird das laufende System statt eines btrfs-Snapshots" "snapper not found: the running system is backed up instead of a btrfs snapshot")"
 
-cat <<FERTIG
+if (( DE )); then cat <<FERTIG
+
+pbs-desk ist installiert.
+  1. Ab- und wieder anmelden (oder "pbs-tray &" starten); das Symbol erscheint im Systemabschnitt der Leiste.
+  2. Rechtsklick > Einstellungen > Backup-Server: Server, Datastore und API-Token eintragen.
+  3. Rechtsklick > Backup jetzt starten, oder auf den Zeitplan warten (17:00, 19:00, 21:00, 23:00).
+     Gesichert wird nur am Netzteil und standardmäßig nicht Mo–Fr 8–17 Uhr.
+FERTIG
+else cat <<FERTIG
 
 pbs-desk is installed.
   1. Log out and back in (or run "pbs-tray &"); the icon appears in the system tray.
@@ -213,3 +252,4 @@ pbs-desk is installed.
   3. Right-click > Start backup now, or wait for the timer (17:00, 19:00, 21:00, 23:00).
      Backups run on AC power only and, by default, not Mon-Fri 8:00-17:00.
 FERTIG
+fi

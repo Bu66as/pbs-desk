@@ -12,8 +12,8 @@ param([switch]$NurStoppen)
 $ErrorActionPreference = "Continue"
 $Prog = "C:\Program Files\PBS-Desk"
 
-# Tray, Einstellungen und Wiederherstellen laufen als pythonw/python aus $Prog\python
-Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
+# Tray, Einstellungen und Wiederherstellen laufen als PBS-Desk/pythonw/python aus $Prog\python
+Get-CimInstance Win32_Process -Filter "Name='PBS-Desk.exe' OR Name='pythonw.exe' OR Name='python.exe'" |
     Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith("$Prog\", "OrdinalIgnoreCase") } |
     ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }
 if ($NurStoppen) { exit 0 }
