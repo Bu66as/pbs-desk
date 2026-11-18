@@ -19,7 +19,22 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pbsdesk as p  # noqa: E402
 from pbsdesk import _  # noqa: E402
 
-STANDARD_ZIEL = os.path.join(p.DATEN, "restore-test")
+
+
+def standard_ziel():
+    """Ordner „Wiederhergestellt“ auf dem Desktop: dort findet ein Laie die Datei sofort."""
+    try:
+        import ctypes
+        puffer = ctypes.create_unicode_buffer(260)
+        # CSIDL_DESKTOPDIRECTORY = 0x10 (folgt auch einem nach OneDrive umgeleiteten Desktop)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, puffer) == 0 and puffer.value:
+            return os.path.join(puffer.value, _("Wiederhergestellt"))
+    except Exception:  # noqa: BLE001
+        pass
+    return os.path.join(p.DATEN, "restore-test")
+
+
+STANDARD_ZIEL = standard_ziel()
 
 
 def snap_text(s):
@@ -189,7 +204,16 @@ def gui():
             return
         app.restoreOverrideCursor()
         protokollieren("ok", pfad, ziel.text(), snap)
-        QMessageBox.information(dlg, p.PROGRAMM, _("Wiederhergestellt nach:\n{ziel}").format(ziel=aus))
+        box = QMessageBox(QMessageBox.Icon.Information, p.PROGRAMM,
+                          _("Wiederhergestellt nach:\n{ziel}").format(ziel=aus), parent=dlg)
+        oeffnen = box.addButton(_("Ordner öffnen"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is oeffnen:
+            try:
+                os.startfile(os.path.dirname(aus) if not ordner else ziel.text())
+            except OSError:
+                pass
 
     baum.itemExpanded.connect(aufklappen)
     auswahl.currentIndexChanged.connect(neu)

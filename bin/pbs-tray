@@ -346,7 +346,11 @@ class EinstellungenDialog(QDialog):
         lay = QVBoxLayout(self)
 
         g = QGroupBox(_("Automatische Sicherung"))
-        f = QFormLayout(g)
+        # Umbrechende Hinweise unter dem Formular statt als Formularzeile:
+        # QFormLayout berechnet ihre Hoehe zu knapp und schneidet Zeilen ab.
+        gv = QVBoxLayout(g)
+        f = QFormLayout()
+        gv.addLayout(f)
         self.zeiten = QLineEdit(aktuelle_zeiten())
         self.zeiten.setPlaceholderText(standard_zeiten())
         self.zeiten.setToolTip(_("Versuche pro Tag, durch Komma getrennt (HH:MM). Gesichert wird "
@@ -378,11 +382,17 @@ class EinstellungenDialog(QDialog):
         self.skip.toggled.connect(self.we.setEnabled)
         self.ws.setEnabled(self.skip.isChecked())
         self.we.setEnabled(self.skip.isChecked())
-        umfang = QLabel(_("Gesichert werden das System (/) und die persönlichen Dateien (/home), "
-                          "ohne Zwischenspeicher, Papierkorb und Container. Ordner und Ausschlüsse "
-                          "legt die Datei {datei} fest (EXCLUDES).").format(datei=CONF))
+        self.ausschluesse = QLineEdit(", ".join(
+            t for t in datei_werte(LOKAL).get("AUSSCHLUESSE", "").split(",") if t))
+        self.ausschluesse.setPlaceholderText(_("z. B. Downloads, Videos"))
+        self.ausschluesse.setToolTip(_("Ordner in Ihrem persönlichen Ordner, die nicht gesichert "
+                                       "werden sollen, durch Komma getrennt. Leer = alles sichern."))
+        f.addRow(_("Nicht sichern:"), self.ausschluesse)
+        umfang = QLabel(_("Gesichert werden das ganze System und alle persönlichen Dateien. "
+                          "Zwischenspeicher, Papierkorb und Container werden immer ausgelassen. "
+                          "Weitere Ordner tragen Sie oben bei „Nicht sichern“ ein."))
         umfang.setWordWrap(True)
-        f.addRow(_("Umfang:"), umfang)
+        gv.addWidget(umfang)
         lay.addWidget(g)
         lay.addWidget(self.server_gruppe())
 
@@ -579,7 +589,8 @@ class EinstellungenDialog(QDialog):
     def speichern(self):
         args = [f"ZEITEN={self.zeiten.text()}",
                 f"ARBEITSZEIT_SKIP={1 if self.skip.isChecked() else 0}",
-                f"WORK_START={self.ws.value()}", f"WORK_END={self.we.value()}"]
+                f"WORK_START={self.ws.value()}", f"WORK_END={self.we.value()}",
+                f"AUSSCHLUESSE={self.ausschluesse.text().replace(' ', '')}"]
         if self.raten:
             args += [f"{k}={e.text().strip()}" for k, e in self.raten.items()]
             args += [f"ABEND_START={self.abend.value()}", f"NACHT_START={self.nacht.value()}"]
@@ -591,8 +602,8 @@ class EinstellungenDialog(QDialog):
 
     def zuruecksetzen(self):
         if QMessageBox.question(self, PROGRAMM,
-                                _("Uhrzeiten, Arbeitszeit und Drossel auf den Standard "
-                                  "zurücksetzen? Ein eingetragener Server bleibt.")) == QMessageBox.StandardButton.Yes:
+                                _("Uhrzeiten, Arbeitszeit, Ausschlüsse und Drossel auf den "
+                                  "Standard zurücksetzen? Ein eingetragener Server bleibt.")) == QMessageBox.StandardButton.Yes:
             self.ausfuehren("reset")
 
 
@@ -912,7 +923,7 @@ class Tray(QSystemTrayIcon):
         else:
             m.addAction(_("Backup jetzt starten …")).triggered.connect(self.starten)
         # Merker gilt nur fuer diese Sitzung: Abmelden oder Tray-Neustart hebt ihn auf.
-        a = QAction(_("Nach dem Backup herunterfahren") if self._aktiv
+        a = QAction(_("Nach dieser Sicherung herunterfahren") if self._aktiv
                     else _("Sichern und danach herunterfahren"), m)
         a.setCheckable(True)
         a.setChecked(self._abschalten is not None)

@@ -185,8 +185,8 @@ msgstr "Token secret:"
 msgid "Tray beenden"
 msgstr "Quit tray"
 
-msgid "Uhrzeiten, Arbeitszeit und Drossel auf den Standard zurücksetzen? Ein eingetragener Server bleibt."
-msgstr "Reset times, working hours and bandwidth limit to the defaults? A configured server is kept."
+msgid "Uhrzeiten, Arbeitszeit, Ausschlüsse und Drossel auf den Standard zurücksetzen? Ein eingetragener Server bleibt."
+msgstr "Reset times, working hours, skipped folders and bandwidth limit to the defaults? A configured server is kept."
 
 msgid "Uhrzeiten:"
 msgstr "Times:"
@@ -269,8 +269,8 @@ msgstr "Shut down now"
 msgid "Kein erfolgreiches Backup – der Rechner bleibt an."
 msgstr "No successful backup – the computer stays on."
 
-msgid "Nach dem Backup herunterfahren"
-msgstr "Shut down after the backup"
+msgid "Nach dieser Sicherung herunterfahren"
+msgstr "Shut down when this backup is done"
 
 msgid "Sichern und danach herunterfahren"
 msgstr "Back up now, then shut down"
@@ -338,8 +338,17 @@ msgstr "Backup ID: the name this device's backups have on the server. Empty = co
 msgid "Fingerabdruck: die Prüfsumme des Server-Zertifikats. Daran erkennt PBS-Desk, dass es mit dem richtigen Server spricht. Mit „Vom Server holen“ abrufen und mit dem PBS-Dashboard vergleichen (Fingerabdruck anzeigen)."
 msgstr "Fingerprint: the checksum of the server certificate. It tells PBS-Desk that it is talking to the right server. Use \"Fetch from server\" and compare it with the PBS dashboard (Show Fingerprint)."
 
-msgid "Gesichert werden das System (/) und die persönlichen Dateien (/home), ohne Zwischenspeicher, Papierkorb und Container. Ordner und Ausschlüsse legt die Datei {datei} fest (EXCLUDES)."
-msgstr "Backs up the system (/) and personal files (/home), without caches, trash and containers. Folders and exclusions are set in {datei} (EXCLUDES)."
+msgid "Gesichert werden das ganze System und alle persönlichen Dateien. Zwischenspeicher, Papierkorb und Container werden immer ausgelassen. Weitere Ordner tragen Sie oben bei „Nicht sichern“ ein."
+msgstr "PBS-Desk backs up the whole system and all your personal files. Caches, the trash and containers are always skipped. To skip other folders, list them under “Don't back up” above."
+
+msgid "z. B. Downloads, Videos"
+msgstr "e.g. Downloads, Videos"
+
+msgid "Ordner in Ihrem persönlichen Ordner, die nicht gesichert werden sollen, durch Komma getrennt. Leer = alles sichern."
+msgstr "Folders in your home folder that should not be backed up, separated by commas. Leave empty to back up everything."
+
+msgid "Nicht sichern:"
+msgstr "Don't back up:"
 
 msgid "Umfang:"
 msgstr "Scope:"

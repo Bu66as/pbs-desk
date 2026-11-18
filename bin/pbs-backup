@@ -40,6 +40,9 @@ if [[ -r "$LOKAL_CONF" ]]; then
       ARBEITSZEIT_SKIP)                          [[ "$_v" =~ ^[01]$ ]] ;;
       WORK_START|WORK_END|ABEND_START|NACHT_START) [[ "$_v" =~ ^([01]?[0-9]|2[0-3])$ ]] ;;
       PBS_RATE_TAG|PBS_RATE_ABEND|PBS_RATE_NACHT) [[ "$_v" =~ ^([0-9]+(\.[0-9]+)?[KMGT]i?B)?$ ]] ;;
+      # Ordner im persoenlichen Ordner, die nicht gesichert werden (Tray-Dialog)
+      # (Pruefung wie in pbs-settings; hier nur Gegenprobe ohne Locale-Abhaengigkeit)
+      AUSSCHLUESSE)     [[ "$_v" != *..* && "$_v" != [/,.]* && "$_v" != *[\$\`\\*?\[\;\&\|\<\>\(\)]* ]] ;;
       # Eigener Server aus dem Einstellungsfenster (Zugangsdaten: $CRED_BASE/lokal)
       SERVER_HOST)      [[ "$_v" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] ;;
       SERVER_PORT)      [[ "$_v" =~ ^[1-9][0-9]{0,4}$ ]] ;;
@@ -274,6 +277,17 @@ ARCHIVE=(root.pxar:"$ROOT_SRC")
 # einen eigenen Snapshot hat — sonst steckt es schon in root.pxar.
 if [[ -n "$HOME_ID" ]] || [[ "$(findmnt -no TARGET --target /home)" == /home ]]; then
   ARCHIVE+=(home.pxar:"$HOME_SRC")
+fi
+
+# Lokale Ausschluesse gelten fuer jeden persoenlichen Ordner. Die Muster sind
+# relativ zur Archivwurzel: /home ist entweder eigenes Archiv oder steckt in root.pxar.
+if [[ -n "${AUSSCHLUESSE:-}" ]]; then
+  IFS=',' read -ra _aus <<< "$AUSSCHLUESSE"
+  for _a in "${_aus[@]}"; do
+    [[ -n "$_a" ]] || continue
+    if [[ " ${ARCHIVE[*]} " == *" home.pxar:"* ]]; then EXCLUDES+=("/*/$_a"); else EXCLUDES+=("/home/*/$_a"); fi
+  done
+  unset _aus _a
 fi
 
 NSARGS=()

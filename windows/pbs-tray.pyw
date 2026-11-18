@@ -225,7 +225,9 @@ class Tray(QSystemTrayIcon):
             m.addAction(_("Backup jetzt starten …")).triggered.connect(self.starten)
             if p.engine_image():
                 m.addAction(_("Image jetzt sichern …")).triggered.connect(self.image_starten)
-        a = QAction(_("Nach dem Backup herunterfahren"), m)
+        # Gleiche Texte wie unter Linux: vor dem Lauf startet der Haken die Sicherung
+        a = QAction(_("Nach dieser Sicherung herunterfahren") if self._aktiv
+                    else _("Sichern und danach herunterfahren"), m)
         a.setCheckable(True)
         a.setChecked(self._abschalten is not None)
         a.toggled.connect(self.abschalten_umschalten)

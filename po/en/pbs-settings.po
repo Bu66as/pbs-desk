@@ -68,3 +68,6 @@ msgstr "Settings saved."
 
 msgid "Backup-Server: {host}."
 msgstr "Backup server: {host}."
+
+msgid "Details: {text}"
+msgstr "Details: {text}"

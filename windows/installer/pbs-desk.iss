@@ -66,6 +66,8 @@ Type: filesandordirs; Name: "{app}"
 [Messages]
 german.LicenseLabel3=PBS-Desk ist freie Software unter der GNU GPL 3: Sie dürfen es kostenlos nutzen, weitergeben und verändern. Eine Garantie gibt es nicht. Unten steht der vollständige Lizenztext (englisch).
 english.LicenseLabel3=PBS-Desk is free software under the GNU GPL 3: you may use, share and change it at no cost. It comes without any warranty. The full license text is below.
+german.FinishedLabel=PBS-Desk ist installiert und sichert diesen Rechner zu den geplanten Zeiten. Das PBS-Desk-Symbol steht unten rechts im Infobereich der Taskleiste. Fehlt es dort, steckt es hinter dem kleinen Pfeil „^“. Ein Rechtsklick auf das Symbol öffnet das Menü mit „Backup jetzt starten …“, „Verlauf …“ und „Einstellungen …“.
+english.FinishedLabel=PBS-Desk is installed and backs up this computer at the scheduled times. Its icon is in the notification area at the bottom right of the taskbar. If you don't see it, click the small "^" arrow there. Right-click the icon to open the menu with "Start backup now …", "History …" and "Settings …".
 
 [CustomMessages]
 german.TrayStarten=PBS-Desk im Infobereich starten

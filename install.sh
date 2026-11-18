@@ -78,11 +78,15 @@ entfernen() {
   rm -rf "$DOC"
   systemctl daemon-reload
   # Laufende Tray-Symbole beenden, sonst bleiben tote Menues stehen
-  pkill -x pbs-tray 2>/dev/null || true
+  # Der Tray laeuft als "python3 .../pbs-tray", der Prozessname ist also python3.
+  # Muster am Zeilenanfang verankert, damit keine Shell getroffen wird, deren
+  # Befehlszeile den Pfad nur enthaelt.
+  pkill -f -- "^([^ ]*/)?python3[0-9.]* $PREFIX/bin/pbs-tray( |\$)" 2>/dev/null || true
   m "pbs-desk ist entfernt." "pbs-desk removed."; echo
   if [[ "$MODUS" == purge ]]; then
     rm -rf /etc/systemd/system/pbs-backup.timer.d /etc/pbs-backup.local "$CONF" \
            /etc/proxmox-backup-client/lokal /var/lib/pbs-backup /var/log/pbs-backup.log*
+    rmdir /etc/proxmox-backup-client 2>/dev/null || true   # nur wenn leer, sonst gehoert es jemand anderem
     systemctl daemon-reload
     m "Einstellungen, Zugangsdaten (Ziel lokal) und Protokoll sind entfernt." "Settings, credentials (target lokal) and log removed."; echo
   else

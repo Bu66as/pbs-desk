@@ -294,3 +294,9 @@ msgstr "Cancel backup"
 
 msgid "Image jetzt sichern …"
 msgstr "Back up image now …"
+
+msgid "Wiederhergestellt"
+msgstr "Restored"
+
+msgid "Ordner öffnen"
+msgstr "Open folder"

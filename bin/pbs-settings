@@ -88,6 +88,10 @@ ERLAUBT = {
     "PBS_RATE_NACHT": RATE,
     "ABEND_START": STUNDE,
     "NACHT_START": STUNDE,
+    # Zusaetzlich auszulassende Ordner im persoenlichen Ordner, Komma-getrennt
+    # (z. B. "Downloads,Videos/Gross"); pbs-backup macht daraus Ausschluss-Muster.
+    "AUSSCHLUESSE": re.compile(r"^((?!.*\.\.)[\w][\w.+-]*(/[\w][\w.+-]*)*"
+                               r"(,(?!.*\.\.)[\w][\w.+-]*(/[\w][\w.+-]*)*)*)?$"),
 }
 
 # Eigener Server. Reihenfolge = Reihenfolge in der Datei.
@@ -180,6 +184,25 @@ def client_pfad():
             or "proxmox-backup-client")
 
 
+def engine_meldung(roh):
+    """Haeufige Fehlertexte von proxmox-backup-client in einen Satz uebersetzen (wie im Tray)."""
+    t = roh.lower()
+    if "fingerprint" in t or "certificate verify failed" in t:
+        return _("Der Server meldet einen anderen Fingerabdruck als eingetragen. Mit „Vom Server holen“ "
+                 "neu abrufen und mit dem Dashboard vergleichen.")
+    if "authentication failed" in t or "401" in t:
+        return _("Anmeldung abgelehnt: API-Token oder Token-Geheimnis stimmt nicht. Bitte beide Felder prüfen.")
+    if "permission check failed" in t or "403" in t:
+        return _("Die Anmeldung klappt, aber dem API-Token fehlen Rechte auf Datastore oder Namespace. "
+                 "Bitte Datastore, Namespace und die Rechte des Tokens im PBS prüfen.")
+    netz = ("connection refused", "timed out", "timeout", "no route", "unreachable", "not known",
+            "dns error", "failed to lookup", "error trying to connect", "connection reset", "tcp connect",
+            "network is")
+    if any(n in t for n in netz):
+        return _("Server nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen.")
+    return None
+
+
 def server_test():
     lokal = lies(LOKAL)
     if not lokal.get("SERVER_HOST") or not os.path.exists(os.path.join(CRED, "token")):
@@ -198,7 +221,12 @@ def server_test():
         print(f"FEHLER: {e}", file=sys.stderr)
         return 1
     if p.returncode != 0:
-        print(f"FEHLER: {p.stderr.strip() or p.stdout.strip()}", file=sys.stderr)
+        roh = p.stderr.strip() or p.stdout.strip()
+        satz = engine_meldung(roh)
+        # Erst der Satz fuer Menschen, der Text der Engine nur als Detailzeile
+        print("FEHLER: " + (satz or roh), file=sys.stderr)
+        if satz and roh:
+            print(_("Details: {text}").format(text=roh), file=sys.stderr)
         return 1
     print("OK: " + _("Anmeldung an {host} klappt, Namespace lesbar.").format(host=lokal["SERVER_HOST"]))
     return 0
@@ -215,6 +243,9 @@ def pruefen(k, v):
         raise ValueError(_("unbekannte Einstellung '{schluessel}'").format(schluessel=k))
     if k == "ZEITEN":
         return ",".join(zeiten_normalisieren(v))
+    if k == "AUSSCHLUESSE":
+        teile = [t.strip().removeprefix("~/").strip("/") for t in v.split(",")]
+        v = ",".join(t for t in teile if t)
     if not ERLAUBT[k].match(v):
         raise ValueError(_("{schluessel}='{wert}' ungültig").format(schluessel=k, wert=v))
     if ERLAUBT[k] is STUNDE:
@@ -322,7 +353,7 @@ def main(argv):
                     lokal.pop(k, None)
                 continue
             # Nur Abweichungen merken; ZEITEN leer = Standard aus pbs-backup.timer
-            if (k == "ZEITEN" and not v) or (k != "ZEITEN" and v == std.get(k)):
+            if (k in ("ZEITEN", "AUSSCHLUESSE") and not v) or (k != "ZEITEN" and v == std.get(k)):
                 lokal.pop(k, None)
             else:
                 lokal[k] = v
