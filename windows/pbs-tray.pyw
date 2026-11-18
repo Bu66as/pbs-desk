@@ -314,48 +314,57 @@ class Tray(QSystemTrayIcon):
         IsPromoted=1 zeigt es dauerhaft an. Nur einmal je Benutzer (Vermerk unter
         HKCU\\Software\\PBS-Desk), damit eine spaetere Wahl des Benutzers bleibt.
         Windows fuehrt den Eintrag je .exe; wechselt der Starter (pythonw.exe -> PBS-Desk.exe),
-        gilt der Vermerk deshalb je Dateiname."""
+        gilt der Vermerk deshalb je Dateiname.
+        Der Explorer legt den Eintrag beim ersten Start oft erst nach Minuten an. Deshalb
+        wird 15 min lang alle 15 s gesucht; klappt es nicht, gilt der Vermerk nicht und der
+        naechste Start des Trays versucht es erneut."""
         import winreg
         exe = os.path.basename(sys.executable).lower()
-        vermerk = "SymbolAngezeigt" if exe == "pythonw.exe" else "SymbolAngezeigt-" + exe
+        # Neuer Name: der fruehere Vermerk "SymbolAngezeigt…" wurde auch gesetzt, wenn der
+        # Eintrag nie gefunden wurde
+        vermerk = "SymbolHervorgeholt-" + exe
         try:
             k = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\PBS-Desk")
-            try:
-                if winreg.QueryValueEx(k, vermerk)[0] == 1:
-                    return
-            except OSError:
-                pass
-            gefunden = False
-            try:
-                basis = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\NotifyIconSettings")
-                i = 0
-                while True:
-                    try:
-                        name = winreg.EnumKey(basis, i)
-                    except OSError:
-                        break
-                    i += 1
-                    try:
-                        sub = winreg.OpenKey(basis, name, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE)
-                        pfad = str(winreg.QueryValueEx(sub, "ExecutablePath")[0]).lower()
-                    except OSError:
-                        continue
-                    if pfad.endswith("\\pbs-desk\\python\\" + exe):
-                        winreg.SetValueEx(sub, "IsPromoted", 0, winreg.REG_DWORD, 1)
-                        gefunden = True
-            except OSError:
-                pass
-            if not gefunden:
-                self._erststart_versuche += 1
-                if self._erststart_versuche < 12:   # Explorer legt den Eintrag verzoegert an
-                    QTimer.singleShot(5000, self.erststart)
-                    return
-            winreg.SetValueEx(k, vermerk, 0, winreg.REG_DWORD, 1)
         except OSError:
             return
-        self.showMessage(p.PROGRAMM, _(
-            "PBS-Desk sichert diesen Rechner. Das Symbol unten rechts in der Taskleiste zeigt den "
-            "Stand, ein Rechtsklick öffnet das Menü."), p.symbol("pbs-desk"), 15000)
+        def gesetzt(name):
+            try:
+                return winreg.QueryValueEx(k, name)[0] == 1
+            except OSError:
+                return False
+        if not gesetzt("HinweisGezeigt"):
+            winreg.SetValueEx(k, "HinweisGezeigt", 0, winreg.REG_DWORD, 1)
+            self.showMessage(p.PROGRAMM, _(
+                "PBS-Desk sichert diesen Rechner. Das Symbol unten rechts in der Taskleiste zeigt den "
+                "Stand, ein Rechtsklick öffnet das Menü."), p.symbol("pbs-desk"), 15000)
+        if gesetzt(vermerk):
+            return
+        gefunden = False
+        try:
+            basis = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\NotifyIconSettings")
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(basis, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    sub = winreg.OpenKey(basis, name, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE)
+                    pfad = str(winreg.QueryValueEx(sub, "ExecutablePath")[0]).lower()
+                except OSError:
+                    continue
+                if pfad.endswith("\\pbs-desk\\python\\" + exe):
+                    winreg.SetValueEx(sub, "IsPromoted", 0, winreg.REG_DWORD, 1)
+                    gefunden = True
+        except OSError:
+            pass
+        if gefunden:
+            winreg.SetValueEx(k, vermerk, 0, winreg.REG_DWORD, 1)
+            return
+        self._erststart_versuche += 1
+        if self._erststart_versuche < 60:
+            QTimer.singleShot(15_000, self.erststart)
 
 
 class VerlaufDialog(QDialog):
@@ -388,7 +397,12 @@ class VerlaufDialog(QDialog):
             grund = "" if st == "ok" else p.grund_text(e.get("grund") or
                                                        ("abgebrochen" if st == "abgebrochen" else "sonstiges"))
             ds = e.get("dauer_s")
-            dauer = restzeit(ds) if isinstance(ds, int) and ds > 0 else "–"
+            if isinstance(ds, int) and ds >= 60:
+                dauer = restzeit(ds)
+            elif isinstance(ds, int) and ds > 0:
+                dauer = _("unter 1 min")
+            else:
+                dauer = "–"
             for j, text in enumerate((datum, dauer, ergebnis, grund)):
                 it = QTableWidgetItem(text)
                 it.setToolTip(text)
@@ -421,7 +435,8 @@ class VerlaufDialog(QDialog):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(p.PROGRAMM)
-    app.setApplicationDisplayName(p.PROGRAMM)
+    # Kein setApplicationDisplayName: Qt haengt ihn sonst an jeden Fenstertitel an
+    # („PBS-Desk – Einstellungen - PBS-Desk“)
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(p.symbol("pbs-desk"))
     p.qt_uebersetzen(app)

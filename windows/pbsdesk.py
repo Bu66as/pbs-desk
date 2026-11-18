@@ -292,6 +292,8 @@ GRUENDE = {
                               "Serveradresse prüfen."),
     "verbindung_weg": lambda: _("Die Verbindung zum Backup-Server ist während der Sicherung "
                                 "abgebrochen. Der nächste Lauf startet automatisch."),
+    "leer": lambda: _("Es wurden keine Daten gesichert, vermutlich konnte Windows keine "
+                      "Schattenkopie anlegen. Der nächste Lauf versucht es erneut."),
     "abgebrochen": lambda: _("Von Hand abgebrochen. Die Sicherung ist unvollständig."),
     "konfiguration": lambda: _("Die Verbindung zum Backup-Server ist nicht vollständig eingerichtet."),
     "sonstiges": lambda: _("Die Sicherung ist fehlgeschlagen. Einzelheiten stehen im technischen Protokoll."),
@@ -359,6 +361,7 @@ class Server:
         self.store = c.get("PBS_DATASTORE", "")
         self.ns = c.get("PBS_NAMESPACE", "")
         self.fp = fp_norm(c.get("PBS_FINGERPRINT", ""))
+        self.backup_id = c.get("PBS_BACKUP_ID") or os.environ.get("COMPUTERNAME", "windows").lower()
         self.auth = f"PBSAPIToken={c.get('PBS_TOKEN_ID', '')}:{geheimnis or c.get('PBS_TOKEN_SECRET', '')}"
 
     def _verbindung(self, timeout=30):
@@ -408,8 +411,12 @@ class Server:
         finally:
             v.close()
 
-    def snapshots(self, nur_fertige=False):
-        s = self.json("snapshots", ns=self.ns)
+    def snapshots(self, nur_fertige=False, nur_eigene=False):
+        """Sicherungen im Namespace; nur_eigene: nur die dieses Geraets (Backup-ID), denn im
+        selben Namespace koennen auch andere Geraete sichern."""
+        s = self.json("snapshots", ns=self.ns,
+                      backup_type="host" if nur_eigene else None,
+                      backup_id=self.backup_id if nur_eigene else None)
         if nur_fertige:
             # Laufende Sicherungen stehen schon in der Liste, haben aber noch keinen
             # Katalog: deren Katalogabfrage scheitert

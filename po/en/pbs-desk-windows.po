@@ -300,3 +300,12 @@ msgstr "Restored"
 
 msgid "Ordner öffnen"
 msgstr "Open folder"
+
+msgid "Datei oder Ordner anklicken und „Wiederherstellen“ wählen. Gleichnamige Dateien im Zielordner werden überschrieben."
+msgstr "Click a file or folder, then choose \"Restore\". Files with the same name in the destination folder will be overwritten."
+
+msgid "Es wurden keine Daten gesichert, vermutlich konnte Windows keine Schattenkopie anlegen. Der nächste Lauf versucht es erneut."
+msgstr "No data was backed up. Windows probably couldn't create a shadow copy. The next backup will try again."
+
+msgid "unter 1 min"
+msgstr "under 1 min"

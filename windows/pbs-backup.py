@@ -49,7 +49,18 @@ FS_TAKT = 5
 RUHE_MESSPUNKTE = 6            # ~30 s Messung, bevor eine Restzeit angezeigt wird
 CHUNK_DATEI = re.compile(rb"^(?:New|Reuse) chunk\[[0-9a-f]+\] (\d+) bytes")
 CHUNK_IMAGE = re.compile(rb"^Chunk (\d+)/(\d+)/")
+# Schlusszeile der Datei-Engine; "New 0, Reused 0" heisst: nichts gesichert (z. B. wenn
+# die VSS-Schattenkopie scheiterte), die Engine endet trotzdem mit rc 0
+BILANZ = re.compile(rb"New (\d+), Reused (\d+), backup took")
 IMAGE_CHUNK = 4 << 20          # pbsmachinebackup: feste 4-MiB-Chunks (.fidx)
+# Haengewaechter: Reisst die Verbindung ab, wartet die Engine ohne Ende (kein Fortschritt)
+# oder liest nach der Rueckkehr des Netzes weiter und scheitert an jedem Chunk
+# ("Error making request: dynamic writer '1' not registered"). Dann Engine beenden und
+# den Lauf als "Verbindung abgebrochen" verbuchen.
+STILLSTAND_S = 300             # so lange ohne neue Daten (nach dem ersten Chunk)
+STILLSTAND_START_S = 900       # vor dem ersten Chunk (Schattenkopie, Zaehlen)
+FEHLERZEILEN_MAX = 20
+FEHLERZEILE = re.compile(rb"^Error making request")
 # Liegen nicht in der VSS-Schattenkopie bzw. kann die Engine nicht lesen
 NICHT_ZAEHLEN = {"pagefile.sys", "hiberfil.sys", "swapfile.sys", "system volume information"}
 
@@ -98,6 +109,9 @@ class Fortschritt:
         self.messpunkte = 0
         self.proc = None          # Engine-Prozess, fuer den Abbruch
         self.abgebrochen = False
+        self.haengt = False
+        self.fehlerzeilen = 0
+        self.letzte_aenderung = (self.start, -1)
         self.fertig = threading.Event()
         if not self.image:
             threading.Thread(target=self._zaehlen, args=(quelle,), daemon=True).start()
@@ -117,6 +131,9 @@ class Fortschritt:
         m = CHUNK_IMAGE.match(z)
         if m:
             self.chunk, self.chunks = int(m.group(1)), int(m.group(2))
+            return
+        if FEHLERZEILE.match(z):
+            self.fehlerzeilen += 1
 
     def _takt(self):
         while True:
@@ -128,8 +145,25 @@ class Fortschritt:
                     except OSError:
                         pass
             self.messen()
+            self.waechter()
             if self.fertig.wait(FS_TAKT):
                 return
+
+    def waechter(self):
+        """Haengende Engine beenden (siehe STILLSTAND_S, FEHLERZEILEN_MAX)."""
+        if self.haengt or self.abgebrochen or self.proc is None:
+            return
+        jetzt = time.time()
+        stand = self.chunk if self.image else self.bytes
+        if stand != self.letzte_aenderung[1]:
+            self.letzte_aenderung = (jetzt, stand)
+        frist = STILLSTAND_S if stand else STILLSTAND_START_S
+        if jetzt - self.letzte_aenderung[0] > frist or self.fehlerzeilen >= FEHLERZEILEN_MAX:
+            self.haengt = True
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
 
     def messen(self):
         dauer = time.time() - self.start
@@ -376,6 +410,7 @@ def main():
             pass
     fs = Fortschritt(art, quelle)
     letzte = []
+    bilanz = None
     try:
         with open(p.LOG, "ab") as logf:
             # Geheimnis steht nur in der Engine-Konfiguration, nie in Befehlszeile oder Protokoll.
@@ -388,6 +423,9 @@ def main():
             for z in proc.stdout:
                 logf.write(z)
                 fs.zeile(z)
+                m = BILANZ.search(z)
+                if m:
+                    bilanz = int(m.group(1)) + int(m.group(2))
                 if not z.startswith((b"New chunk", b"Reuse chunk", b"Chunk ")):
                     letzte = (letzte + [z.strip()])[-40:]
             rc = proc.wait()
@@ -406,6 +444,14 @@ def main():
     mehr = {}
     if fs.abgebrochen:
         status, mehr = "abgebrochen", {"grund": "abgebrochen"}
+    elif fs.haengt:
+        status = "fehler"
+        mehr = {"grund": "verbindung_weg" if (fs.bytes or fs.chunk) else "unerreichbar",
+                "meldung": f"Engine beendet: {fs.fehlerzeilen} Fehlerzeilen, kein Fortschritt"}
+        log(f"[{ausloeser}] FEHLER: Engine haengt (Fehlerzeilen={fs.fehlerzeilen}), beendet")
+    elif rc == 0 and not image and not bilanz:
+        # rc 0, aber keine Chunks (oder keine Schlusszeile): nicht als Erfolg zaehlen
+        status, mehr = "fehler", {"grund": "leer", "meldung": "Engine meldet keine gesicherten Daten"}
     elif rc != 0:
         mehr = {"grund": engine_grund(letzte, fs.bytes),
                 "meldung": (letzte[-1] if letzte else b"").decode("utf-8", "replace")[:200]}

@@ -78,7 +78,7 @@ def protokollieren(status, pfad, ziel, snap=None, fehler=None):
 
 def cli(args):
     server = p.Server()
-    snaps = server.snapshots(nur_fertige=True)
+    snaps = server.snapshots(nur_fertige=True, nur_eigene=True)
     if "--liste" in args:
         for i, s in enumerate(snaps):
             print(i, snap_text(s), " ".join(f["filename"] for f in s.get("files", [])))
@@ -103,7 +103,8 @@ def gui():
                                    QLabel, QLineEdit, QMessageBox, QPushButton, QTreeWidget,
                                    QTreeWidgetItem, QVBoxLayout)
     app = QApplication(sys.argv)
-    app.setApplicationDisplayName(p.PROGRAMM)
+    # Kein setApplicationDisplayName: Qt haengt ihn sonst an jeden Fenstertitel an
+    # („PBS-Desk – Einstellungen - PBS-Desk“)
     p.qt_uebersetzen(app)
     if not p.ist_admin():
         QMessageBox.warning(None, p.PROGRAMM, _("Abgebrochen: keine Administratorrechte."))
@@ -114,7 +115,7 @@ def gui():
     app.setOverrideCursor(Qt.CursorShape.WaitCursor)
     try:
         server = p.Server()
-        snaps = server.snapshots(nur_fertige=True)
+        snaps = server.snapshots(nur_fertige=True, nur_eigene=True)
     except Exception as e:
         app.restoreOverrideCursor()
         QMessageBox.warning(None, p.PROGRAMM, p.klartext(e))
@@ -151,7 +152,8 @@ def gui():
         QFileDialog.getExistingDirectory(dlg, _("Zielordner"), ziel.text()) or ziel.text()))
     zeile.addWidget(wahl)
     lay.addLayout(zeile)
-    hinweis = QLabel(_("Gleichnamige Dateien im Zielordner werden überschrieben."))
+    hinweis = QLabel(_("Datei oder Ordner anklicken und „Wiederherstellen“ wählen. "
+                       "Gleichnamige Dateien im Zielordner werden überschrieben."))
     hinweis.setWordWrap(True)
     hinweis.setStyleSheet("color: gray")
     lay.addWidget(hinweis)
@@ -186,7 +188,17 @@ def gui():
 
     def neu():
         baum.clear()
-        fuellen(None, "/")
+        # Oberste Ebene ist das Archiv (backup.pxar.didx). Gibt es nur eines, gleich
+        # dessen Inhalt zeigen: der Name sagt einem Laien nichts.
+        snap = snaps[auswahl.currentIndex()]
+        try:
+            oben = server.katalog(snap, "/")
+        except Exception:  # noqa: BLE001
+            oben = []
+        if len(oben) == 1 and not oben[0].get("leaf", True):
+            fuellen(None, eintrag_pfad(oben[0]))
+        else:
+            fuellen(None, "/")
 
     def wiederherstellen():
         it = baum.currentItem()

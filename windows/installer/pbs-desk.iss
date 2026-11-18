@@ -49,6 +49,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "fingerabdruck.ps1"; Flags: dontcopy
 Source: "entfernen.ps1"; Flags: dontcopy
+Source: "verbindung.ps1"; Flags: dontcopy
 
 [Run]
 Filename: "{app}\python\PBS-Desk.exe"; Parameters: """{app}\app\pbs-tray.pyw"""; WorkingDir: "{app}\app"; \
@@ -64,10 +65,13 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; \
 Type: filesandordirs; Name: "{app}"
 
 [Messages]
+; Ohne [Icons] nimmt Inno FinishedLabelNoIcons, deshalb beide setzen
 german.LicenseLabel3=PBS-Desk ist freie Software unter der GNU GPL 3: Sie dürfen es kostenlos nutzen, weitergeben und verändern. Eine Garantie gibt es nicht. Unten steht der vollständige Lizenztext (englisch).
 english.LicenseLabel3=PBS-Desk is free software under the GNU GPL 3: you may use, share and change it at no cost. It comes without any warranty. The full license text is below.
 german.FinishedLabel=PBS-Desk ist installiert und sichert diesen Rechner zu den geplanten Zeiten. Das PBS-Desk-Symbol steht unten rechts im Infobereich der Taskleiste. Fehlt es dort, steckt es hinter dem kleinen Pfeil „^“. Ein Rechtsklick auf das Symbol öffnet das Menü mit „Backup jetzt starten …“, „Verlauf …“ und „Einstellungen …“.
+german.FinishedLabelNoIcons=PBS-Desk ist installiert und sichert diesen Rechner zu den geplanten Zeiten. Das PBS-Desk-Symbol steht unten rechts im Infobereich der Taskleiste. Fehlt es dort, steckt es hinter dem kleinen Pfeil „^“. Ein Rechtsklick auf das Symbol öffnet das Menü mit „Backup jetzt starten …“, „Verlauf …“ und „Einstellungen …“.
 english.FinishedLabel=PBS-Desk is installed and backs up this computer at the scheduled times. Its icon is in the notification area at the bottom right of the taskbar. If you don't see it, click the small "^" arrow there. Right-click the icon to open the menu with "Start backup now …", "History …" and "Settings …".
+english.FinishedLabelNoIcons=PBS-Desk is installed and backs up this computer at the scheduled times. Its icon is in the notification area at the bottom right of the taskbar. If you don't see it, click the small "^" arrow there. Right-click the icon to open the menu with "Start backup now …", "History …" and "Settings …".
 
 [CustomMessages]
 german.TrayStarten=PBS-Desk im Infobereich starten
@@ -78,7 +82,7 @@ german.Seite2Text=Womit sich dieser Rechner beim Backup-Server anmeldet
 german.HilfeServer=Adresse des Backup-Servers, z. B. backup.example.org
 german.HilfeDatastore=Speicherbereich auf dem Backup-Server, z. B. backup
 german.HilfeNamespace=Unterordner im Speicherbereich, meist für dieses Gerät (optional)
-german.HilfeToken=Benutzername für die Sicherung, Form benutzer@realm!name, z. B. sicherung@pbs!pc1
+german.HilfeToken=Benutzername für die Sicherung, z. B. sicherung@pbs!pc1
 german.HilfeSecret=Passwort zum Token
 german.HilfeId=Name, unter dem dieses Gerät gesichert wird
 german.HilfeFp=Kennung des Servers, schützt vor Verwechslung
@@ -101,6 +105,12 @@ german.FpFrage=Der Server meldet diesen Fingerabdruck:%n%n%1%n%nStimmt er mit de
 german.FpFehler=Server nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen.%n%nDetails: %1
 german.ServerUngueltig=Bitte zuerst die Adresse des Backup-Servers (und den Port) eintragen.
 german.EinrichtenFehler=Das Einrichten von Aufgaben und Autostart ist fehlgeschlagen (Exitcode %1). Setup erneut ausführen oder windows\install.ps1 -NurEinrichten als Administrator starten.
+german.PruefAnmeldung=Der Backup-Server lehnt die Anmeldung ab: API-Token oder Token-Geheimnis stimmt nicht. Bitte beide Felder prüfen.
+german.PruefFp=Der Server meldet einen anderen Fingerabdruck als eingetragen. Bitte mit „Zurück“ zur vorigen Seite gehen, „Vom Server holen“ wählen und mit dem Dashboard vergleichen.
+german.PruefWeg=Der Backup-Server ist nicht erreichbar. Bitte Netzwerkverbindung und Serveradresse prüfen.
+german.PruefRechte=Die Anmeldung klappt, aber das Token darf diesen Datastore oder Namespace nicht benutzen (Fehler %1). Bitte Datastore, Namespace und die Rechte des Tokens prüfen.
+german.PruefSonst=Die Verbindung zum Backup-Server ließ sich nicht prüfen.%n%nDetails: %1
+german.PruefTrotzdem=%1%n%nTrotzdem mit diesen Angaben installieren? Die Verbindung lässt sich später unter „Einstellungen“ korrigieren.
 german.DatenFrage=Sollen auch die Daten unter %1 gelöscht werden (Zugangsdaten, Einstellungen, Verlauf)?%n%nBei „Nein“ bleiben sie für eine spätere Installation erhalten.
 english.TrayStarten=Start PBS-Desk in the notification area
 english.SeiteTitel=Backup server
@@ -110,7 +120,7 @@ english.Seite2Text=How this computer logs in to the backup server
 english.HilfeServer=Address of the backup server, e.g. backup.example.org
 english.HilfeDatastore=Storage area on the backup server, e.g. backup
 english.HilfeNamespace=Subfolder in the storage area, usually one per device (optional)
-english.HilfeToken=User name for backups, in the form user@realm!name, e.g. backup@pbs!pc1
+english.HilfeToken=User name for backups, e.g. backup@pbs!pc1
 english.HilfeSecret=Password for the token
 english.HilfeId=Name this device is backed up under
 english.HilfeFp=Identifies the server, so you don't connect to the wrong one
@@ -133,6 +143,12 @@ english.FpFrage=The server reports this fingerprint:%n%n%1%n%nDoes it match the 
 english.FpFehler=Can't reach the server. Check your network connection and the server address.%n%nDetails: %1
 english.ServerUngueltig=Please enter the backup server address (and port) first.
 english.EinrichtenFehler=Setting up the scheduled tasks and autostart failed (exit code %1). Run Setup again, or run windows\install.ps1 -NurEinrichten as administrator.
+english.PruefAnmeldung=The backup server rejected the login: the API token or the token secret is wrong. Please check both fields.
+english.PruefFp=The server reports a different fingerprint than the one entered. Click Back, choose "Get from server" and compare it with the dashboard.
+english.PruefWeg=Can't reach the backup server. Check your network connection and the server address.
+english.PruefRechte=The login works, but this token isn't allowed to use the datastore or namespace (error %1). Check the datastore, the namespace and the token's permissions.
+english.PruefSonst=Couldn't check the connection to the backup server.%n%nDetails: %1
+english.PruefTrotzdem=%1%n%nInstall with these settings anyway? You can fix the connection later in Settings.
 english.DatenFrage=Also delete the data in %1 (credentials, settings, history)?%n%nChoose No to keep it for a later installation.
 
 [Code]
@@ -192,7 +208,7 @@ begin
     H.Parent := S.Surface;
     H.Caption := Hilfe;
     H.Left := ScaleX(110);
-    H.Top := y + ScaleY(22);
+    H.Top := y + ScaleY(25);
     H.Font.Color := clGray;
   end;
 end;
@@ -321,6 +337,40 @@ begin
     Hinweis.Caption := CustomMessage('HinweisNeu');
 end;
 
+{ Verbindung mit Token pruefen (verbindung.ps1); True = weiter.
+  Das Geheimnis geht nur als Datei im privaten Temp-Ordner des Setups an das Skript. }
+function VerbindungOk: Boolean;
+var Ziel, Geheim, Arg, Text: String; Inhalt: AnsiString; rc: Integer;
+begin
+  Result := True;
+  ExtractTemporaryFile('verbindung.ps1');
+  Ziel := ExpandConstant('{tmp}\verbindung.txt');
+  Geheim := ExpandConstant('{tmp}\geheim.txt');
+  DeleteFile(Ziel);
+  if not SaveStringToFile(Geheim, Trim(Felder[F_SECRET].Text), False) then exit;
+  Arg := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{tmp}\verbindung.ps1') +
+         '" -Server "' + Trim(Felder[F_SERVER].Text) + '" -Port ' + IntToStr(StrToIntDef(Trim(Felder[F_PORT].Text), 8007)) +
+         ' -Datastore "' + Trim(Felder[F_STORE].Text) + '" -Namespace "' + Trim(Felder[F_NS].Text) +
+         '" -Token "' + Trim(Felder[F_TOKEN].Text) + '" -Fingerabdruck "' + Trim(Felder[F_FP].Text) +
+         '" -GeheimDatei "' + Geheim + '" -Ziel "' + Ziel + '"';
+  WizardForm.NextButton.Enabled := False;
+  try
+    Exec(PowerShell, Arg, '', SW_HIDE, ewWaitUntilTerminated, rc);
+  finally
+    DeleteFile(Geheim);
+    WizardForm.NextButton.Enabled := True;
+  end;
+  if not LoadStringFromFile(Ziel, Inhalt) then Inhalt := 'FEHLER ?';
+  Inhalt := Trim(Inhalt);
+  if Inhalt = 'OK' then exit;
+  if Inhalt = 'ANMELDUNG' then Text := CustomMessage('PruefAnmeldung')
+  else if Inhalt = 'FINGERABDRUCK' then Text := CustomMessage('PruefFp')
+  else if Copy(Inhalt, 1, 12) = 'UNERREICHBAR' then Text := CustomMessage('PruefWeg')
+  else if Copy(Inhalt, 1, 5) = 'HTTP ' then Text := FmtMessage(CustomMessage('PruefRechte'), [Copy(Inhalt, 6, MaxInt)])
+  else Text := FmtMessage(CustomMessage('PruefSonst'), [Copy(Inhalt, 8, MaxInt)]);
+  Result := MsgBox(FmtMessage(CustomMessage('PruefTrotzdem'), [Text]), mbError, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+end;
+
 { Fehlendes Feld merken: Name sammeln, erstes Feld markieren }
 procedure Pruefe(i: Integer; const Name: String; var Fehlt: String; var Erstes: Integer);
 begin
@@ -363,7 +413,10 @@ begin
     MsgBox(FmtMessage(CustomMessage('Fehlt'), [Trim(Fehlt)]), mbError, MB_OK);
     WizardForm.ActiveControl := Felder[Erstes];
     Result := False;
+    exit;
   end;
+  if CurPageID = Seite2.ID then
+    Result := VerbindungOk;
 end;
 
 { Ohne Server keine Zugangsseite }

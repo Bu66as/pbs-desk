@@ -170,8 +170,9 @@ foreach ($t in "Sicherung-Hand", "Image-Hand", "Abbrechen") {
 
 # --- Autostart und Startmenue ------------------------------------------------------
 Schritt "Tray-Autostart und Startmenue"
-$tray = "`"$Tray`" `"$Prog\app\pbs-tray.pyw`""
-Set-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "PBS-Desk" -Value $tray
+# Eigener Name: PowerShell unterscheidet nicht zwischen $tray und $Tray
+$autostart = "`"$Tray`" `"$Prog\app\pbs-tray.pyw`""
+Set-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "PBS-Desk" -Value $autostart
 $sh = New-Object -ComObject WScript.Shell
 $lnk = $sh.CreateShortcut("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\PBS-Desk.lnk")
 $lnk.TargetPath = $Tray

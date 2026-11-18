@@ -17,8 +17,8 @@ import pbsdesk as p  # noqa: E402
 from pbsdesk import _  # noqa: E402
 
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox,  # noqa: E402
-                               QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QMessageBox,
-                               QPushButton, QSpinBox, QVBoxLayout)
+                               QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLineEdit, QMessageBox,
+                               QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 UHRZEIT = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d$")
 
@@ -45,7 +45,15 @@ class EinstellungenDialog(QDialog):
         self.setWindowTitle(_("{programm} – Einstellungen").format(programm=p.PROGRAMM))
         self.setWindowIcon(p.symbol("pbs-desk"))
         w, c = p.einstellungen(), p.datei_werte(p.CONF)
-        lay = QVBoxLayout(self)
+        aussen = QVBoxLayout(self)
+        # Formular in einem Rollbereich, Speichern/Abbrechen immer sichtbar: auf
+        # 1280x800 ragte das Fenster sonst unten aus dem Bildschirm
+        rollen = QScrollArea()
+        rollen.setWidgetResizable(True)
+        rollen.setFrameShape(QFrame.Shape.NoFrame)
+        inhalt = QWidget()
+        lay = QVBoxLayout(inhalt)
+        lay.setContentsMargins(0, 0, 0, 0)
 
         zeit = QGroupBox(_("Zeitplan"))
         f = QFormLayout(zeit)
@@ -129,7 +137,14 @@ class EinstellungenDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.speichern)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        rollen.setWidget(inhalt)
+        aussen.addWidget(rollen, 1)
+        aussen.addWidget(bb)
+        # Hoehe an den Bildschirm anpassen (Taskleiste und Titelleiste abziehen)
+        frei = QApplication.primaryScreen().availableGeometry()
+        bedarf = inhalt.sizeHint()
+        self.resize(max(bedarf.width() + 40, 560),
+                    min(bedarf.height() + bb.sizeHint().height() + 40, frei.height() - 60))
 
     def server_conf(self):
         alt = p.datei_werte(p.CONF)
@@ -204,7 +219,8 @@ def QLabelHinweis(text):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationDisplayName(p.PROGRAMM)
+    # Kein setApplicationDisplayName: Qt haengt ihn sonst an jeden Fenstertitel an
+    # („PBS-Desk – Einstellungen - PBS-Desk“)
     p.qt_uebersetzen(app)
     if not p.ist_admin():
         QMessageBox.warning(None, p.PROGRAMM, _("Abgebrochen: keine Administratorrechte."))
