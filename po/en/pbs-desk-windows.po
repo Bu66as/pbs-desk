@@ -309,3 +309,6 @@ msgstr "No data was backed up. Windows probably couldn't create a shadow copy. T
 
 msgid "unter 1 min"
 msgstr "under 1 min"
+
+msgid "PBS-Desk läuft bereits. Das Symbol finden Sie unten rechts in der Taskleiste, neben der Uhr."
+msgstr "PBS-Desk is already running. Its icon is at the bottom right of the taskbar, next to the clock."

@@ -369,7 +369,13 @@ class Server:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         v = http.client.HTTPSConnection(self.host, self.port, context=ctx, timeout=timeout)
-        v.connect()
+        try:
+            v.connect()
+        except ssl.SSLError:
+            raise
+        except OSError as e:
+            # z. B. WinError 10013/10060/10065 (Firewall, kein Netz): als „nicht erreichbar“ melden
+            raise ConnectionError(f"Server {self.host}:{self.port} nicht erreichbar: {e}") from e
         echt = hashlib.sha256(v.sock.getpeercert(binary_form=True)).hexdigest()
         if self.fp and echt != self.fp:
             v.close()

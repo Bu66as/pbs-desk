@@ -432,6 +432,19 @@ class VerlaufDialog(QDialog):
             QMessageBox.information(self, p.PROGRAMM, _("Noch kein Protokoll vorhanden."))
 
 
+_MUTEX = None
+
+
+def schon_gestartet():
+    """True, wenn in dieser Windows-Sitzung schon ein Tray laeuft (benannter Mutex)."""
+    global _MUTEX
+    import ctypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateMutexW.restype = ctypes.c_void_p
+    _MUTEX = k.CreateMutexW(None, False, "Local\\PBS-Desk-Tray")
+    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(p.PROGRAMM)
@@ -440,6 +453,11 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(p.symbol("pbs-desk"))
     p.qt_uebersetzen(app)
+    if schon_gestartet():
+        QMessageBox.information(None, p.PROGRAMM, _(
+            "PBS-Desk läuft bereits. Das Symbol finden Sie unten rechts in der Taskleiste, "
+            "neben der Uhr."))
+        return 0
     if not QSystemTrayIcon.isSystemTrayAvailable():
         return 1
     tray = Tray()  # noqa: F841
