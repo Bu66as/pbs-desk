@@ -322,6 +322,56 @@ def engine_grund(zeilen, verarbeitet):
     return g
 
 
+VERSUCHE = 3
+PAUSE = 60
+ABGELEHNT = (b"Unexpected response code", b"Error making request")
+
+
+def warten(sek):
+    """Pause zwischen zwei Versuchen; False, wenn in der Zeit abgebrochen wurde."""
+    ende = time.time() + sek
+    while time.time() < ende:
+        if os.path.exists(p.ABBRUCH):
+            return False
+        time.sleep(2)
+    try:
+        p.Server(p.datei_werte(p.CONF)).pruefen()
+    except Exception:  # noqa: BLE001 - Server noch weg: die Engine meldet es gleich selbst
+        pass
+    return True
+
+
+def engine_lauf(cmd, art, quelle, ausloeser):
+    """Ein Engine-Lauf mit Protokoll und Fortschritt."""
+    fs = Fortschritt(art, quelle)
+    letzte = []
+    bilanz = None
+    try:
+        with open(p.LOG, "ab") as logf:
+            # Geheimnis steht nur in der Engine-Konfiguration, nie in Befehlszeile oder Protokoll.
+            # Ausgabe zeilenweise ins Protokoll und an die Fortschrittsmessung.
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            fs.proc = proc
+            if fs.abgebrochen:
+                proc.kill()
+            for z in proc.stdout:
+                logf.write(z)
+                fs.zeile(z)
+                m = BILANZ.search(z)
+                if m:
+                    bilanz = int(m.group(1)) + int(m.group(2))
+                if not z.startswith((b"New chunk", b"Reuse chunk", b"Chunk ")):
+                    letzte = (letzte + [z.strip()])[-40:]
+            rc = proc.wait()
+    except OSError as e:
+        log(f"[{ausloeser}] FEHLER: {e}")
+        rc = -1
+    finally:
+        fs_werte = fs.ende()
+    return fs, rc, bilanz, letzte, fs_werte
+
+
 def main():
     if "--abbrechen" in sys.argv:
         return abbrechen()
@@ -408,32 +458,23 @@ def main():
             os.remove(weg)
         except OSError:
             pass
-    fs = Fortschritt(art, quelle)
-    letzte = []
-    bilanz = None
+    # Nach einem Netzausfall lehnt der Server den naechsten Lauf oft kurz ab (alte Sitzung noch
+    # offen, HTTP 400), die Engine endet dann trotzdem mit rc 0. Solche Laeufe und Verbindungs-
+    # fehler werden nach einer Pause wiederholt, statt als „nichts gesichert“ zu enden.
     try:
-        with open(p.LOG, "ab") as logf:
-            # Geheimnis steht nur in der Engine-Konfiguration, nie in Befehlszeile oder Protokoll.
-            # Ausgabe zeilenweise ins Protokoll und an die Fortschrittsmessung.
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    creationflags=subprocess.CREATE_NO_WINDOW)
-            fs.proc = proc
-            if fs.abgebrochen:
-                proc.kill()
-            for z in proc.stdout:
-                logf.write(z)
-                fs.zeile(z)
-                m = BILANZ.search(z)
-                if m:
-                    bilanz = int(m.group(1)) + int(m.group(2))
-                if not z.startswith((b"New chunk", b"Reuse chunk", b"Chunk ")):
-                    letzte = (letzte + [z.strip()])[-40:]
-            rc = proc.wait()
-    except OSError as e:
-        log(f"[{ausloeser}] FEHLER: {e}")
-        rc = -1
+        for versuch in range(1, VERSUCHE + 1):
+            fs, rc, bilanz, letzte, fs_werte = engine_lauf(cmd, art, quelle, ausloeser)
+            abgelehnt = any(z.startswith(ABGELEHNT) for z in letzte)
+            if fs.abgebrochen or versuch == VERSUCHE or not (
+                    (rc == 0 and not image and not bilanz and abgelehnt) or fs.haengt
+                    or (rc != 0 and engine_grund(letzte, fs.bytes) in ("unerreichbar", "verbindung_weg"))):
+                break
+            log(f"[{ausloeser}] WIEDERHOLUNG {versuch + 1}/{VERSUCHE} in {PAUSE} s "
+                f"(rc={rc}, abgelehnt={abgelehnt}, haengt={fs.haengt})")
+            if not warten(PAUSE):
+                fs.abgebrochen = True
+                break
     finally:
-        fs_werte = fs.ende()
         for weg in (p.LAUF, konfig, p.ABBRUCH):
             try:
                 os.remove(weg)
@@ -449,6 +490,9 @@ def main():
         mehr = {"grund": "verbindung_weg" if (fs.bytes or fs.chunk) else "unerreichbar",
                 "meldung": f"Engine beendet: {fs.fehlerzeilen} Fehlerzeilen, kein Fortschritt"}
         log(f"[{ausloeser}] FEHLER: Engine haengt (Fehlerzeilen={fs.fehlerzeilen}), beendet")
+    elif rc == 0 and not image and not bilanz and abgelehnt:
+        status, mehr = "fehler", {"grund": "abgelehnt",
+                                  "meldung": "Server hat die Sicherung abgelehnt (auch nach Wiederholung)"}
     elif rc == 0 and not image and not bilanz:
         # rc 0, aber keine Chunks (oder keine Schlusszeile): nicht als Erfolg zaehlen
         status, mehr = "fehler", {"grund": "leer", "meldung": "Engine meldet keine gesicherten Daten"}

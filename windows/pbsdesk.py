@@ -294,6 +294,9 @@ GRUENDE = {
                                 "abgebrochen. Der nächste Lauf startet automatisch."),
     "leer": lambda: _("Es wurden keine Daten gesichert, vermutlich konnte Windows keine "
                       "Schattenkopie anlegen. Der nächste Lauf versucht es erneut."),
+    "abgelehnt": lambda: _("Der Backup-Server hat die Sicherung abgelehnt, meist weil nach einer "
+                           "Netzunterbrechung noch die alte Verbindung offen ist. Der nächste Lauf "
+                           "versucht es erneut."),
     "abgebrochen": lambda: _("Von Hand abgebrochen. Die Sicherung ist unvollständig."),
     "konfiguration": lambda: _("Die Verbindung zum Backup-Server ist nicht vollständig eingerichtet."),
     "sonstiges": lambda: _("Die Sicherung ist fehlgeschlagen. Einzelheiten stehen im technischen Protokoll."),

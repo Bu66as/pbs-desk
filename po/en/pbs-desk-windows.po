@@ -312,3 +312,6 @@ msgstr "under 1 min"
 
 msgid "PBS-Desk läuft bereits. Das Symbol finden Sie unten rechts in der Taskleiste, neben der Uhr."
 msgstr "PBS-Desk is already running. Its icon is at the bottom right of the taskbar, next to the clock."
+
+msgid "Der Backup-Server hat die Sicherung abgelehnt, meist weil nach einer Netzunterbrechung noch die alte Verbindung offen ist. Der nächste Lauf versucht es erneut."
+msgstr "The backup server refused the backup. This usually happens right after a network outage, while the old connection is still open. The next backup will try again."
