@@ -17,8 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pbsdesk as p  # noqa: E402
 from pbsdesk import _  # noqa: E402
 
-from PySide6.QtCore import QTimer  # noqa: E402
-from PySide6.QtGui import QAction  # noqa: E402
+from PySide6.QtCore import QPoint, QTimer  # noqa: E402
+from PySide6.QtGui import QAction, QCursor, QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,  # noqa: E402
                                QHeaderView, QLabel, QMenu, QMessageBox, QPushButton,
                                QSystemTrayIcon, QTableWidget, QTableWidgetItem, QVBoxLayout)
@@ -122,9 +122,11 @@ class AbschaltDialog(QDialog):
 class Tray(QSystemTrayIcon):
     def __init__(self):
         super().__init__()
+        # Kein setContextMenu: Qt setzt das Menue dort an den Mauszeiger, bevor es
+        # gefuellt ist, und rechnet mit dem ganzen Bildschirm. Das untere Ende lag
+        # dann hinter der Taskleiste und Klicks trafen daneben. Deshalb
+        # baut menue_zeigen() das Menue zuerst und setzt es selbst in den freien Bereich.
         self.menu = QMenu()
-        self.setContextMenu(self.menu)
-        self.menu.aboutToShow.connect(self.menue_bauen)
         self.activated.connect(self.geklickt)
         self._abschalten = None      # Zeitpunkt, ab dem auf das Laufende gewartet wird
         self._aktiv = False
@@ -195,11 +197,29 @@ class Tray(QSystemTrayIcon):
                 self._balken = None
 
     def geklickt(self, grund):
-        if grund == QSystemTrayIcon.ActivationReason.Trigger:
+        if grund == QSystemTrayIcon.ActivationReason.Context:
+            self.menue_zeigen()
+        elif grund == QSystemTrayIcon.ActivationReason.Trigger:
             self.aktualisieren()
             self.showMessage(titel(), "\n".join(z for z in self._zeilen if z), p.symbol("pbs-desk"), 8000)
 
     # --- Menue -----------------------------------------------------------
+    def menue_zeigen(self):
+        if self.menu.isVisible():
+            self.menu.close()
+            return
+        self.menue_bauen()
+        pos = QCursor.pos()
+        bs = QGuiApplication.screenAt(pos) or QGuiApplication.primaryScreen()
+        frei = bs.availableGeometry()          # ohne Taskleiste
+        g = self.menu.sizeHint()
+        x = min(max(pos.x(), frei.left()), frei.right() + 1 - g.width())
+        # Taskleiste unten: Menue nach oben aufklappen, sonst nach unten
+        y = pos.y() - g.height() if pos.y() + g.height() > frei.bottom() + 1 else pos.y()
+        y = min(max(y, frei.top()), frei.bottom() + 1 - g.height())
+        self.menu.popup(QPoint(x, y))
+        self.menu.activateWindow()
+
     def menue_bauen(self):
         self.aktualisieren()
         m = self.menu
